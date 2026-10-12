@@ -1,0 +1,32 @@
+[package]
+name = "runvil-cli"
+description = "Run any runvil prompt from the command line through the gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "runvil"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+# The runvil Harness and the crates a Host plugs into it, all from the
+# vendored checkout pinned at vendor/promptforge.
+harness = { path = "../../vendor/promptforge/crates/harness" }
+harness-gateway-client = { path = "../../vendor/promptforge/crates/harness-gateway-client" }
+plugin-mcp = { path = "../../vendor/promptforge/crates/plugin-mcp" }
+plugin-web = { path = "../../vendor/promptforge/crates/plugin-web" }
+promptforge-plugin = { path = "../../vendor/promptforge/crates/promptforge-plugin" }
+serde_json = "1.0.151"
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "signal", "fs", "time"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
