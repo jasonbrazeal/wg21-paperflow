@@ -87,6 +87,33 @@ To move promptforge, check out the new commit inside `vendor/promptforge`,
 fix the crate against it, and commit both in one PR. The pin must not be
 newer than the promptforge commit the deployed gateway runs.
 
+### Run paper-mcp locally
+
+`paper-mcp` (in `crates/`) is the MCP server that serves paper metadata, full
+text, citations, and search from Qdrant. `paper-mcp ingest` copies the
+paperstore into Qdrant; `paper-mcp serve` answers MCP calls from Qdrant alone.
+It needs Qdrant 1.19 or later, and downloads the BGE-M3 embedding model (about
+2.3 GB) into its cache directory on first use.
+
+```bash
+cargo build --release -p paper-mcp      # target/release/paper-mcp
+export PAPER_MCP_QDRANT_URL=http://localhost:6334
+export PAPER_MCP_QDRANT_API_KEY=...     # when Qdrant has one
+export PAPER_MCP_MODEL_CACHE_DIR=~/.cache/paper-mcp
+paper-mcp ingest P3045R9 P2728R14         # or: all, or years such as 2026
+export PAPER_MCP_KEYS_FILE=secrets/paper-mcp-keys   # one bearer token per line
+paper-mcp serve                           # http://127.0.0.1:8003/papers/mcp
+```
+
+- Ingest reads `paperstore.db` under `WG21_DATA_DIR` read-only. It runs only
+  by hand, and skips papers whose chunks are current unless given `--force`.
+- Every setting can also come from a TOML file passed with `--config` or
+  `PAPER_MCP_CONFIG`; environment variables override it. The settings and
+  their defaults are in `crates/paper-mcp/src/config.rs`.
+- SIGHUP reloads the keys file.
+- `cargo test -p paper-mcp --test it -- --ignored` runs the integration and
+  golden tests; they need Qdrant, the model cache, and `WG21_DATA_DIR`.
+
 ## Tests
 
 ```bash
