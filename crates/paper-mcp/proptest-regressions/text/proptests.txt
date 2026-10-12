@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4801e674707ebb15ceaefaa500246b12a2f6ccec0475fd9d30880eb93ef728ca # shrinks to md = "\n", s = ChunkSettings { target_tokens: 1, overlap_max_tokens: 0, max_input_tokens: 40 }

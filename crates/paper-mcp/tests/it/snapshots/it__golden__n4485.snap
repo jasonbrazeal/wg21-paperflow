@@ -1,0 +1,27 @@
+---
+source: crates/paper-mcp/tests/it/golden.rs
+expression: "render(\"n4485\", false)"
+---
+lines: 73723
+sections: 1115
+  1 1-693 ""
+  2 694-694 "1. Set failbit upon conversion error (including overflow), and don't store any value."
+  3 695-695 "2. Set failbit upon conversion error, and also set errno to indicated the precise nature of the error."
+  4 696-1280 "3. Set failbit upon conversion error. If the error was due to overflow, store +-numeric_limits<T>::max() as an overflow indication."
+  5 1281-1291 "1. In lib.basic.ios.members paragraph 13 (postcondition clause for 'fill(cT)') change"
+  6 1292-1302 "2. In lib.istream.unformatted paragraph 7 (effects clause for 'get(cT,streamsize,cT)'), third bullet, change"
+  7 1303-1313 "3. In lib.istream.unformatted paragraph 12 (effects clause for 'get(basic_streambuf<cT,Tr>&,cT)'), third bullet, change"
+  8 1314-1325 "4. In lib.istream.unformatted paragraph 17 (effects clause for 'getline(cT,streamsize,cT)'), second bullet, change"
+  9 1326-1337 "5. In lib.istream.unformatted paragraph 24 (effects clause for 'ignore(int,int_type)'), second bullet, change"
+  10 1338-1349 "6. In lib.istream.unformatted paragraph 25 (notes clause for 'ignore(int,int_type)'), second bullet, change"
+  11 1350-1363 "7. In lib.istream.sentry paragraph 6 (example implementation for the sentry constructor) change"
+  12 1364-1374 "1. In lib.string::find paragraph 1 (effects clause for find()), second bullet, change"
+  13 1375-1385 "2. In lib.string::rfind paragraph 1 (effects clause for rfind()), second bullet, change"
+  14 1386-1396 "3. In lib.string::find.first.of paragraph 1 (effects clause for find_first_of()), second bullet, change"
+  15 1397-1407 "4. In lib.string::find.last.of paragraph 1 (effects clause for find_last_of()), second bullet, change"
+  16 1408-1418 "5. In lib.string::find.first.not.of paragraph 1 (effects clause for find_first_not_of()), second bullet, change"
+  17 1419-1429 "6. In lib.string::find.last.not.of paragraph 1 (effects clause for find_last_not_of()), second bullet, change"
+  18 1430-4497 "7. In lib.string.ios paragraph 5 (effects clause for getline()), second bullet, change"
+  19 4498-4498 "1. state in a footnote that this means that xsputn() will never be called by any ostream member and that this is intended."
+  20 4499-6319 "2. relax the restriction and allow calling overflow() and xsputn(). Of course, the problem with flush() has to be resolved in some way."
+chunks: 2518

@@ -112,6 +112,72 @@ jobs:
           path: target/release/paperweight
           if-no-files-found: error
 
+  paper-mcp:
+    name: paper-mcp (cargo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # The workspace includes paperweight, whose promptforge dependency
+      # lives in the vendor/promptforge submodule.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Format
+        run: cargo fmt -p paper-mcp --check
+
+      - name: Clippy
+        run: cargo clippy --locked -p paper-mcp --all-targets --all-features -- -D warnings
+
+      - name: Test
+        run: cargo test --locked -p paper-mcp
+
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: crates/paper-mcp/Cargo.toml
+          command: check
+
+  paper-mcp-integration:
+    name: paper-mcp integration (Qdrant + BGE-M3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      qdrant:
+        image: qdrant/qdrant:v1.19.2
+        ports:
+          - 6334:6334
+    env:
+      PAPER_MCP_QDRANT_URL: http://localhost:6334
+      PAPER_MCP_MODEL_CACHE_DIR: ${{ github.workspace }}/../paper-mcp-models
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      # BGE-M3 is about 2.3 GB; keep it between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/../paper-mcp-models
+          key: paper-mcp-bge-m3-fastembed-7
+
+      - name: Integration tests
+        run: cargo test --locked -p paper-mcp --test it -- --ignored ingest_and_call_every_tool
+
   integration-tests:
     name: integration tests
     runs-on: ubuntu-latest
