@@ -3,8 +3,9 @@ resolver = "3"
 members = ["crates/*"]
 # Path dependencies inside the workspace directory would otherwise be
 # adopted as members and inherit *this* root's workspace tables; the nested
-# runvil checkout is its own workspace.
-exclude = ["vendor/runvil"]
+# runvil checkout is its own workspace. paper-mcp is its own workspace
+# too, so its Docker image builds from crates/paper-mcp alone.
+exclude = ["vendor/runvil", "crates/paper-mcp"]
 
 [workspace.package]
 version = "0.1.0"

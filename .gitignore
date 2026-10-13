@@ -1,5 +1,6 @@
 /.pytest_cache
 /target
+/crates/paper-mcp/target
 __pycache__/
 .venv/
 .local/

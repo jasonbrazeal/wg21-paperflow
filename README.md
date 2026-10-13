@@ -93,10 +93,21 @@ newer than the runvil commit the deployed gateway runs.
 text, citations, and search from Qdrant. `paper-mcp ingest` copies the
 paperstore into Qdrant; `paper-mcp serve` answers MCP calls from Qdrant alone.
 It needs Qdrant 1.19 or later, and downloads the BGE-M3 embedding model (about
-2.3 GB) into its cache directory on first use.
+2.3 GB) into its cache directory on first use. paper-mcp is its own Cargo
+workspace, so build and test it from `crates/paper-mcp`.
+
+`compose.yaml` runs paper-mcp and Qdrant in Docker; it reads bearer tokens
+from `~/.config/paper-mcp/keys`:
 
 ```bash
-cargo build --release -p paper-mcp      # target/release/paper-mcp
+docker compose up --build
+docker compose exec paper-mcp paper-mcp ingest P3045R9 P2728R14
+```
+
+To run it directly instead:
+
+```bash
+cargo build --release --manifest-path crates/paper-mcp/Cargo.toml   # crates/paper-mcp/target/release/paper-mcp
 export PAPER_MCP_QDRANT_URL=http://localhost:6334
 export PAPER_MCP_QDRANT_API_KEY=...     # when Qdrant has one
 export PAPER_MCP_MODEL_CACHE_DIR=~/.cache/paper-mcp
@@ -111,7 +122,7 @@ paper-mcp serve                           # http://127.0.0.1:8003/papers/mcp
   `PAPER_MCP_CONFIG`; environment variables override it. The settings and
   their defaults are in `crates/paper-mcp/src/config.rs`.
 - SIGHUP reloads the keys file.
-- `cargo test -p paper-mcp --test it -- --ignored` runs the integration and
+- `cargo test --test it -- --ignored`, run in `crates/paper-mcp`, runs the integration and
   golden tests; they need Qdrant, the model cache, and `WG21_DATA_DIR`.
 
 ## Tests
