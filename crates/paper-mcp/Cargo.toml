@@ -1,15 +1,37 @@
 [package]
 name = "paper-mcp"
 description = "MCP server giving prompts full access to WG21 paper text, metadata, and citations"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "BSL-1.0"
+repository = "https://github.com/cppalliance/wg21-paperflow"
 publish = false
 
-[lints]
-workspace = true
+# paper-mcp is its own workspace, excluded from the paperflow root one, so
+# it builds from this directory alone (its Docker image needs nothing else).
+# The package values and lints mirror the root workspace's.
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "deny"
+future_incompatible = { level = "warn", priority = -1 }
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "warn"
+doc_markdown = "allow"
 
 [dependencies]
 anyhow = "1.0.104"

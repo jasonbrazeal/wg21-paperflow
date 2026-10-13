@@ -1,0 +1,49 @@
+# paper-mcp and the Qdrant it reads, nothing else.
+#
+#   docker compose up --build
+#   docker compose exec paper-mcp paper-mcp ingest P3045R9 P2728R14
+#
+# The MCP endpoint is http://127.0.0.1:8003/papers/mcp. Clients send a bearer
+# token from the keys file (one token per line), which must exist before
+# `up`. The first start downloads the BGE-M3 embedding model (about 2.3 GB)
+# into the paper_mcp_models volume.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    volumes:
+      - qdrant_data:/qdrant/storage
+    # The image ships without curl or wget, so probe the gRPC port with bash.
+    healthcheck:
+      test: ["CMD", "bash", "-c", ":> /dev/tcp/127.0.0.1/6334"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  paper-mcp:
+    build: crates/paper-mcp
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: on-failure
+    environment:
+      PAPER_MCP_QDRANT_URL: http://qdrant:6334
+      WG21_DATA_DIR: /code/wg21-paperflow/data
+    ports:
+      - "127.0.0.1:8003:8003"
+    volumes:
+      - paper_mcp_models:/models
+      # Ingest opens each paper's markdown_path exactly as paperstore.db
+      # records it, an absolute /code/wg21-paperflow/data/... path, so the
+      # data is mounted at that same path.
+      - ./data:/code/wg21-paperflow/data:ro
+    secrets:
+      - paper-mcp-keys
+
+secrets:
+  paper-mcp-keys:
+    file: ${HOME}/.config/paper-mcp/keys
+
+volumes:
+  qdrant_data:
+  paper_mcp_models:
