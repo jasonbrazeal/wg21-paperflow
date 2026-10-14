@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 
 pub use blocks::{Block, BlockKind};
 pub use chunks::{
-    Chunk, ChunkSettings, PaperLabel, TokenCounter, chunk_document, chunk_section, context_header,
+    Chunk, ChunkSettings, MIN_MAX_TOKENS, PaperLabel, SPECIAL_TOKENS, TokenCounter, chunk_document,
+    chunk_section, context_header,
 };
 pub use headings::{Heading, clean_heading_text};
 pub use range::{InclusiveRange, resolve_range};

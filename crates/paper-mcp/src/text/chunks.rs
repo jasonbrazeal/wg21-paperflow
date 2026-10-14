@@ -1,4 +1,10 @@
 //! Retrieval chunks (§5.5).
+//!
+//! Every chunk's embedded text fits [`ChunkSettings::max_tokens`]. Blocks
+//! are kept whole when they fit; a block that does not is split at the most
+//! meaningful boundary that makes its parts fit: blank-line groups of a code
+//! block or rows of an HTML table, then lines, then points inside a line
+//! (sentence ends, tag ends, whitespace, and as a last resort any character).
 
 use super::blocks::{self, Block, BlockKind};
 use super::{ChunkNo, Document, LineNo, Section, SectionIndex};
@@ -10,28 +16,53 @@ pub trait TokenCounter {
 }
 
 /// Tokens the model adds around every input (`<s>` and `</s>`).
-const SPECIAL_TOKENS: usize = 2;
+pub const SPECIAL_TOKENS: usize = 2;
 
-/// Head room kept below the model's input limit, because summing per-line
-/// token counts can differ slightly from counting the joined text.
+/// Head room kept below the size limit, because summing the token counts of
+/// pieces can differ slightly from counting the joined text.
 const SAFETY_MARGIN_TOKENS: usize = 32;
+
+/// Tokens reserved in every chunk besides the header and the text.
+const RESERVED_TOKENS: usize = SPECIAL_TOKENS + SAFETY_MARGIN_TOKENS;
+
+/// The context header is shortened to at most `max_tokens / HEADER_SHARE`.
+const HEADER_SHARE: usize = 4;
+
+/// A fence or table line is repeated in later parts of a split block only
+/// when it costs at most `max_tokens / REPEAT_SHARE`.
+const REPEAT_SHARE: usize = 8;
+
+/// When cutting a line, the longest piece searched is this many bytes per
+/// token of budget. A shorter piece than possible is still a valid piece.
+const SEARCH_BYTES_PER_TOKEN: usize = 16;
 
 /// Separator between the parts of a heading path.
 const HEADING_PATH_SEPARATOR: &str = " › ";
 
+/// Marks a shortened context header.
+const ELLIPSIS: &str = "…";
+
+/// The smallest accepted [`ChunkSettings::max_tokens`], which leaves room
+/// for the shortened header, a repeated line, and some text.
+pub const MIN_MAX_TOKENS: usize = 128;
+
 /// Chunk sizes, all in tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkSettings {
-    /// The size a chunk grows to before a new one starts.
+    /// The size a chunk grows to before a new one starts, and the size of
+    /// the pieces an over-long line is cut into.
     pub target_tokens: usize,
     /// The largest block repeated as the overlap at the start of the next
     /// chunk.
     pub overlap_max_tokens: usize,
-    /// The embedding model's input limit.
-    pub max_input_tokens: usize,
+    /// The most tokens in a chunk's embedded text, special tokens included.
+    /// At least [`MIN_MAX_TOKENS`] and at least twice `target_tokens`.
+    pub max_tokens: usize,
 }
 
-/// One retrieval chunk: whole lines of one section.
+/// One retrieval chunk: a contiguous span of one section. It begins and
+/// ends at line boundaries unless it holds part of a line too long for one
+/// chunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Chunk {
     /// The section the chunk belongs to.
@@ -40,17 +71,21 @@ pub struct Chunk {
     pub number: ChunkNo,
     /// The first line, the overlap included.
     pub first: LineNo,
+    /// The byte offset in `first` where the chunk starts.
+    pub start_byte: usize,
     /// The last line.
     pub last: LineNo,
+    /// The byte offset in `last` where the chunk ends, exclusive, or `None`
+    /// when it runs to the end of that line.
+    pub end_byte: Option<usize>,
     /// The section heading followed by the headings in force where the
     /// chunk's own content starts.
     pub heading_path: Vec<String>,
+    /// The context header embedded before the text, shortened when long.
+    pub header: String,
     /// For the second and later parts of a split code block or table, the
-    /// fence or header line repeated at the top of the embedded text.
+    /// fence or opening line repeated at the top of the embedded text.
     pub repeated_line: Option<LineNo>,
-    /// Whether the embedded text is still longer than the model accepts,
-    /// which happens only for a single block or line that cannot be split.
-    pub oversized: bool,
 }
 
 impl Chunk {
@@ -60,17 +95,35 @@ impl Chunk {
         self.heading_path.join(HEADING_PATH_SEPARATOR)
     }
 
-    /// The chunk's stored text: exactly its lines.
+    /// The chunk's stored text: exactly its span, lines joined with `\n`.
     #[must_use]
     pub fn text(&self, doc: &Document<'_>) -> String {
-        doc.text(self.first, self.last)
+        let lines = doc.lines();
+        let (first, last) = (self.first.zero_based(), self.last.zero_based());
+        let mut out = String::new();
+        for index in first..=last {
+            let Some(&line) = lines.get(index) else {
+                break;
+            };
+            let start = if index == first { self.start_byte } else { 0 };
+            let end = if index == last {
+                self.end_byte.unwrap_or(line.len())
+            } else {
+                line.len()
+            };
+            if index > first {
+                out.push('\n');
+            }
+            out.push_str(line.get(start..end).unwrap_or_default());
+        }
+        out
     }
 
     /// The text that is embedded: the context header, a blank line, any
-    /// repeated fence or header line, then the chunk text.
+    /// repeated fence or table line, then the chunk text.
     #[must_use]
-    pub fn embed_text(&self, doc: &Document<'_>, paper_id: &str, title: &str) -> String {
-        let mut out = context_header(paper_id, title, self.section, &self.heading_path_text());
+    pub fn embed_text(&self, doc: &Document<'_>) -> String {
+        let mut out = self.header.clone();
         out.push_str("\n\n");
         if let Some(line) = self.repeated_line.and_then(|l| doc.line(l)) {
             out.push_str(line);
@@ -81,7 +134,8 @@ impl Chunk {
     }
 }
 
-/// The context header placed before a chunk's text when it is embedded.
+/// The full context header placed before a chunk's text when it is
+/// embedded.
 #[must_use]
 pub fn context_header(
     paper_id: &str,
@@ -106,6 +160,29 @@ pub struct PaperLabel<'a> {
     pub title: &'a str,
 }
 
+/// A position in the paper: a 0-based line and a byte offset into it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pos {
+    line: usize,
+    byte: usize,
+}
+
+/// A span `start..end` that fits in a chunk, with its token cost.
+#[derive(Debug, Clone, Copy)]
+struct Unit {
+    start: Pos,
+    end: Pos,
+    tokens: usize,
+}
+
+/// A context header and the tokens it and the reserve take.
+#[derive(Debug, Clone)]
+struct Header {
+    path: Vec<String>,
+    text: String,
+    cost: usize,
+}
+
 struct Chunker<'d, 'a, C: TokenCounter> {
     doc: &'d Document<'a>,
     section: &'d Section,
@@ -122,6 +199,7 @@ struct Pending {
     first: usize,
     last: usize,
     tokens: usize,
+    header: Header,
 }
 
 impl<C: TokenCounter> Chunker<'_, '_, C> {
@@ -150,159 +228,274 @@ impl<C: TokenCounter> Chunker<'_, '_, C> {
         path
     }
 
-    fn header_tokens(&self, path: &[String]) -> usize {
-        let header = context_header(
+    /// The header for content starting at `line`, cut short with an
+    /// ellipsis when it would take more than its share of a chunk.
+    fn header(&self, line: LineNo) -> Header {
+        let path = self.heading_path(line);
+        let full = context_header(
             self.label.paper_id,
             self.label.title,
             self.section.index,
             &path.join(HEADING_PATH_SEPARATOR),
         );
-        self.counter.count(&header) + SPECIAL_TOKENS + SAFETY_MARGIN_TOKENS
+        let budget = self.settings.max_tokens / HEADER_SHARE;
+        let text = if self.counter.count(&full) <= budget {
+            full
+        } else {
+            let room = budget.saturating_sub(self.counter.count(ELLIPSIS));
+            let keep = self.fit_len(&full, room);
+            format!("{}{ELLIPSIS}", &full[..keep])
+        };
+        // The blank line between header and text is counted as one token.
+        let cost = self.counter.count(&text) + 1 + RESERVED_TOKENS;
+        Header { path, text, cost }
     }
 
-    fn push(
-        &mut self,
-        first: LineNo,
-        last: LineNo,
-        path: Vec<String>,
-        repeated: Option<LineNo>,
-        oversized: bool,
-    ) {
+    fn line_len(&self, line: usize) -> usize {
+        self.doc.lines()[line].len()
+    }
+
+    fn line_end(&self, line: usize) -> Pos {
+        Pos {
+            line,
+            byte: self.line_len(line),
+        }
+    }
+
+    fn push(&mut self, start: Pos, end: Pos, header: &Header, repeated: Option<LineNo>) {
         let number = ChunkNo::from_zero_based(self.chunks.len());
+        let end_byte = (end.byte < self.line_len(end.line)).then_some(end.byte);
         self.chunks.push(Chunk {
             section: self.section.index,
             number,
-            first,
-            last,
-            heading_path: path,
+            first: LineNo::from_zero_based(start.line),
+            start_byte: start.byte,
+            last: LineNo::from_zero_based(end.line),
+            end_byte,
+            heading_path: header.path.clone(),
+            header: header.text.clone(),
             repeated_line: repeated,
-            oversized,
         });
     }
 
     fn flush(&mut self, pending: &Pending) {
-        let content_first = self.blocks[pending.first].first;
-        let path = self.heading_path(content_first);
-        let oversized = pending.tokens + self.header_tokens(&path) > self.settings.max_input_tokens;
-        let first = pending
-            .overlap
-            .map_or(content_first, |o| self.blocks[o].first);
-        self.push(first, self.blocks[pending.last].last, path, None, oversized);
+        let first = self.blocks[pending.overlap.unwrap_or(pending.first)].first;
+        let start = Pos {
+            line: first.zero_based(),
+            byte: 0,
+        };
+        let end = self.line_end(self.blocks[pending.last].last.zero_based());
+        self.push(start, end, &pending.header, None);
     }
 
     fn overlap_for(&self, tail: Option<usize>) -> Option<usize> {
         tail.filter(|&b| self.tokens[b] <= self.settings.overlap_max_tokens)
     }
 
-    fn start(&self, block: usize, tail: Option<usize>, header: usize) -> Pending {
+    fn start(&self, block: usize, tail: Option<usize>, header: Header) -> Pending {
         let overlap = self.overlap_for(tail).filter(|&o| {
-            self.tokens[o] + self.tokens[block] + header <= self.settings.max_input_tokens
+            self.tokens[o] + self.tokens[block] + header.cost <= self.settings.max_tokens
         });
         Pending {
             overlap,
             first: block,
             last: block,
             tokens: overlap.map_or(0, |o| self.tokens[o]) + self.tokens[block],
+            header,
         }
     }
 
-    /// Splits an oversized code block or table at line boundaries.
-    fn split_block(&mut self, block: usize, tail: Option<usize>) {
-        let Block { first, last, .. } = self.blocks[block];
-        let path = self.heading_path(first);
-        let header = self.header_tokens(&path);
+    /// The length in bytes of the longest prefix of `text` that counts at
+    /// most `budget` tokens, at least one character when `text` is not
+    /// empty.
+    fn fit_len(&self, text: &str, budget: usize) -> usize {
+        let window =
+            floor_char_boundary(text, budget.saturating_mul(SEARCH_BYTES_PER_TOKEN).max(1));
+        if window == text.len() && self.counter.count(text) <= budget {
+            return text.len();
+        }
+        let ends: Vec<usize> = text[..window]
+            .char_indices()
+            .map(|(i, c)| i + c.len_utf8())
+            .collect();
+        // Only an end whose prefix was counted and fits moves `low`, so the
+        // answer fits even where counts are not monotonic.
+        let (mut low, mut high) = (0, ends.len());
+        while low < high {
+            let mid = low + (high - low) / 2;
+            if self.counter.count(&text[..ends[mid]]) <= budget {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        match low {
+            0 => ends.first().copied().unwrap_or(0),
+            n => ends[n - 1],
+        }
+    }
+
+    /// The length of the next piece of `text`: the longest fitting prefix,
+    /// shortened to its last sentence end, tag end, or whitespace when one
+    /// lies in its second half.
+    fn piece_len(&self, text: &str, budget: usize) -> usize {
+        let end = self.fit_len(text, budget);
+        if end == text.len() {
+            return end;
+        }
+        let head = &text.as_bytes()[..end];
+        let floor = end / 2;
+        let last_break =
+            |at: &dyn Fn(usize) -> bool| (floor + 1..end).rev().find(|&i| at(i)).map(|i| i + 1);
+        let sentence = |i: usize| {
+            i > 0 && head[i].is_ascii_whitespace() && matches!(head[i - 1], b'.' | b'!' | b'?')
+        };
+        let tag = |i: usize| head[i] == b'>';
+        let space = |i: usize| head[i].is_ascii_whitespace();
+        last_break(&sentence)
+            .or_else(|| last_break(&tag))
+            .or_else(|| last_break(&space))
+            .unwrap_or(end)
+    }
+
+    /// Cuts one line into pieces of at most `budget` tokens plus its
+    /// newline.
+    fn line_pieces(&self, line: usize, budget: usize, out: &mut Vec<Unit>) {
+        let text = self.doc.lines()[line];
+        let mut start = 0;
+        loop {
+            let len = self.piece_len(&text[start..], budget);
+            let end = start + len;
+            out.push(Unit {
+                start: Pos { line, byte: start },
+                end: Pos { line, byte: end },
+                tokens: self.counter.count(&text[start..end]) + 1,
+            });
+            start = end;
+            if start >= text.len() {
+                break;
+            }
+        }
+    }
+
+    /// Lines `first..=last` as one unit when they fit `limit`, else line by
+    /// line, cutting lines that are still too long.
+    fn line_units(&self, first: usize, last: usize, limit: usize, out: &mut Vec<Unit>) {
+        let tokens = self
+            .counter
+            .count(&self.doc.lines()[first..=last].join("\n"))
+            + 1;
+        if tokens <= limit {
+            out.push(Unit {
+                start: Pos {
+                    line: first,
+                    byte: 0,
+                },
+                end: self.line_end(last),
+                tokens,
+            });
+        } else if first < last {
+            for line in first..=last {
+                self.line_units(line, line, limit, out);
+            }
+        } else {
+            let budget = self
+                .settings
+                .target_tokens
+                .min(limit.saturating_sub(1))
+                .max(1);
+            self.line_pieces(first, budget, out);
+        }
+    }
+
+    /// Divides a block into units of at most `limit` tokens, in order.
+    fn units(&self, block: Block, limit: usize) -> Vec<Unit> {
+        let mut out = Vec::new();
+        for (first, last) in groups(self.doc.lines(), block) {
+            self.line_units(first, last, limit, &mut out);
+        }
+        out
+    }
+
+    /// Splits a block too large for one chunk into parts packed toward the
+    /// target size.
+    fn split_block(&mut self, block: usize, tail: Option<usize>, header: &Header) {
+        let max = self.settings.max_tokens;
+        let target = self.settings.target_tokens;
+        let this = self.blocks[block];
         let lines = self.doc.lines();
-        let start = first.zero_based();
-        let end = last.zero_based();
-        let repeat = (start..=end)
-            .find(|&i| !lines[i].trim().is_empty())
-            .unwrap_or(start);
-        let repeat_tokens = self.counter.count(lines[repeat]) + 1;
-        let limit = self.settings.max_input_tokens;
+        let repeat = matches!(this.kind, BlockKind::Code | BlockKind::Table)
+            .then(|| {
+                (this.first.zero_based()..=this.last.zero_based())
+                    .find(|&i| !lines[i].trim().is_empty())
+            })
+            .flatten()
+            .map(|i| (LineNo::from_zero_based(i), self.counter.count(lines[i]) + 1))
+            .filter(|&(_, tokens)| tokens <= max / REPEAT_SHARE);
+        let first_limit = max.saturating_sub(header.cost);
+        let rest_limit = first_limit.saturating_sub(repeat.map_or(0, |(_, t)| t));
+        let units = self.units(this, rest_limit);
 
-        let mut overlap = self.overlap_for(tail);
-        let mut part_start = start;
-        let mut used = overlap.map_or(0, |o| self.tokens[o]);
-        let mut extra = 0;
-        let mut index = start;
-        while index <= end {
-            let cost = self.counter.count(lines[index]) + 1;
-            let budget = limit.saturating_sub(header + extra);
-            if index > part_start && used + cost > budget {
-                self.emit_part(
-                    part_start,
-                    index - 1,
-                    overlap.take(),
-                    &path,
-                    extra,
-                    used,
-                    header,
-                    repeat,
-                    start,
-                );
-                part_start = index;
+        // The overlap and its newline join the first part when both fit.
+        let overlap = self.overlap_for(tail).filter(|&o| {
+            units
+                .first()
+                .is_some_and(|u| self.tokens[o] + 1 + u.tokens <= first_limit)
+        });
+        let mut part_start = overlap.map(|o| Pos {
+            line: self.blocks[o].first.zero_based(),
+            byte: 0,
+        });
+        let mut used = overlap.map_or(0, |o| self.tokens[o] + 1);
+        let mut current: Option<(Pos, Pos)> = None;
+        let mut repeated = None;
+        for unit in units {
+            let limit = if repeated.is_some() {
+                rest_limit
+            } else {
+                first_limit
+            };
+            if let Some((start, end)) = current {
+                if used + unit.tokens <= target.min(limit) {
+                    current = Some((start, unit.end));
+                    used += unit.tokens;
+                    continue;
+                }
+                self.push(part_start.take().unwrap_or(start), end, header, repeated);
+                repeated = repeat.map(|(line, _)| line);
                 used = 0;
-                extra = repeat_tokens;
-                continue;
             }
-            if index == part_start && used + cost > budget && overlap.is_some() {
-                overlap = None;
-                used = 0;
-                continue;
-            }
-            used += cost;
-            index += 1;
+            current = Some((unit.start, unit.end));
+            used += unit.tokens;
         }
-        self.emit_part(
-            part_start, end, overlap, &path, extra, used, header, repeat, start,
-        );
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn emit_part(
-        &mut self,
-        from: usize,
-        to: usize,
-        overlap: Option<usize>,
-        path: &[String],
-        extra: usize,
-        used: usize,
-        header: usize,
-        repeat: usize,
-        block_start: usize,
-    ) {
-        let first = overlap.map_or(LineNo::from_zero_based(from), |o| self.blocks[o].first);
-        let repeated = (from != block_start).then(|| LineNo::from_zero_based(repeat));
-        let oversized = used + extra + header > self.settings.max_input_tokens;
-        self.push(
-            first,
-            LineNo::from_zero_based(to),
-            path.to_vec(),
-            repeated,
-            oversized,
-        );
+        if let Some((start, end)) = current {
+            self.push(part_start.unwrap_or(start), end, header, repeated);
+        }
     }
 
     fn run(mut self) -> Vec<Chunk> {
+        let max = self.settings.max_tokens;
+        let target = self.settings.target_tokens;
         let mut pending: Option<Pending> = None;
         let mut tail: Option<usize> = None;
         for index in 0..self.blocks.len() {
             let block = self.blocks[index];
             let tokens = self.tokens[index];
-            let header = self.header_tokens(&self.heading_path(block.first));
-            let splittable = matches!(block.kind, BlockKind::Code | BlockKind::Table);
-            if splittable && tokens + header > self.settings.max_input_tokens {
+            let header = self.header(block.first);
+            if tokens + header.cost > max {
                 if let Some(p) = pending.take() {
                     tail = Some(p.last);
                     self.flush(&p);
                 }
-                self.split_block(index, tail);
+                self.split_block(index, tail, &header);
                 tail = None;
                 continue;
             }
             pending = Some(match pending.take() {
                 None => self.start(index, tail, header),
-                Some(mut p) if p.tokens + tokens <= self.settings.target_tokens => {
+                Some(mut p)
+                    if p.tokens + tokens <= target && p.tokens + tokens + p.header.cost <= max =>
+                {
                     p.last = index;
                     p.tokens += tokens;
                     p
@@ -319,6 +512,39 @@ impl<C: TokenCounter> Chunker<'_, '_, C> {
         }
         self.chunks
     }
+}
+
+/// The largest char boundary of `text` at or below `index`.
+fn floor_char_boundary(text: &str, index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    (0..=index)
+        .rev()
+        .find(|&i| text.is_char_boundary(i))
+        .unwrap_or(0)
+}
+
+/// The 0-based line ranges a block divides into before lines: blank-line
+/// separated groups of a code block, rows of an HTML table, and the whole
+/// block otherwise.
+fn groups(lines: &[&str], block: Block) -> Vec<(usize, usize)> {
+    let (start, end) = (block.first.zero_based(), block.last.zero_based());
+    let starts_group = |i: usize| match block.kind {
+        BlockKind::Code => lines[i - 1].trim().is_empty() && !lines[i].trim().is_empty(),
+        BlockKind::Table => blocks::opens_html_row(lines[i]),
+        BlockKind::ListItem | BlockKind::Heading | BlockKind::Paragraph => false,
+    };
+    let mut out = Vec::new();
+    let mut first = start;
+    for i in start + 1..=end {
+        if starts_group(i) {
+            out.push((first, i - 1));
+            first = i;
+        }
+    }
+    out.push((first, end));
+    out
 }
 
 /// Chunks one section.
@@ -383,13 +609,17 @@ pub(crate) mod tests {
         ChunkSettings {
             target_tokens: target,
             overlap_max_tokens: overlap,
-            max_input_tokens: max,
+            max_tokens: max,
         }
     }
 
-    fn ranges(md: &str, s: ChunkSettings) -> Vec<(usize, usize, usize, Option<usize>)> {
+    fn chunks(md: &str, s: ChunkSettings) -> Vec<Chunk> {
         let doc = Document::parse(md);
         chunk_document(&doc, &doc.sections(), s, &Words, LABEL)
+    }
+
+    fn ranges(md: &str, s: ChunkSettings) -> Vec<(usize, usize, usize, Option<usize>)> {
+        chunks(md, s)
             .into_iter()
             .map(|c| {
                 (
@@ -404,6 +634,14 @@ pub(crate) mod tests {
 
     fn words(n: usize) -> String {
         vec!["w"; n].join(" ")
+    }
+
+    fn assert_fits(md: &str, found: &[Chunk], max: usize) {
+        let doc = Document::parse(md);
+        for chunk in found {
+            let tokens = Words.count(&chunk.embed_text(&doc)) + SPECIAL_TOKENS;
+            assert!(tokens <= max, "{tokens} > {max}: {chunk:?}");
+        }
     }
 
     #[test]
@@ -433,7 +671,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_block_larger_than_the_target_runs_long() {
+    fn a_block_larger_than_the_target_runs_long_while_it_fits() {
         let md = format!("{}\n", words(50));
         assert_eq!(ranges(&md, settings(10, 5, 1000)), vec![(1, 1, 1, None)]);
     }
@@ -457,29 +695,131 @@ pub(crate) mod tests {
     fn oversized_code_blocks_split_with_the_fence_repeated() {
         let body: Vec<String> = (0..30).map(|_| words(4)).collect();
         let md = format!("```cpp\n{}\n```\n", body.join("\n"));
-        // Header "Paper: p1r0 / Title: T / Section 1" is 6 words, plus 34
-        // reserved, so a 100-token limit leaves 60 for text.
-        let doc = Document::parse(&md);
-        let chunks = chunk_document(&doc, &doc.sections(), settings(10, 5, 100), &Words, LABEL);
-        assert!(chunks.len() > 1);
-        assert_eq!(chunks[0].first.get(), 1);
-        assert_eq!(chunks[0].repeated_line, None);
-        for pair in chunks.windows(2) {
+        let found = chunks(&md, settings(10, 5, 128));
+        assert!(found.len() > 1);
+        assert_eq!(found[0].first.get(), 1);
+        assert_eq!(found[0].repeated_line, None);
+        for pair in found.windows(2) {
             assert_eq!(pair[1].first.get(), pair[0].last.get() + 1);
             assert_eq!(pair[1].repeated_line.map(LineNo::get), Some(1));
         }
-        assert_eq!(chunks.last().map(|c| c.last.get()), Some(32));
-        assert!(chunks.iter().all(|c| !c.oversized));
-        let embedded = chunks[1].embed_text(&doc, "p1r0", "T");
+        assert_eq!(found.last().map(|c| c.last.get()), Some(32));
+        assert_fits(&md, &found, 128);
+        let doc = Document::parse(&md);
+        let embedded = found[1].embed_text(&doc);
         assert!(embedded.starts_with("Paper: p1r0\nTitle: T\nSection 1\n\n```cpp\nw w w w"));
+    }
+
+    #[test]
+    fn oversized_code_blocks_split_at_blank_lines_first() {
+        let group = vec![words(8); 3].join("\n");
+        let md = format!("```\n{group}\n\n{group}\n\n{group}\n\n{group}\n```\n");
+        // Each group is 24 words, a newline, and maybe a fence, so target 30
+        // holds one group: the groups are lines 1-5, 6-9, 10-13, and 14-17.
+        let found = ranges(&md, settings(30, 0, 128));
+        assert_eq!(
+            found,
+            vec![
+                (1, 1, 5, None),
+                (1, 6, 9, Some(1)),
+                (1, 10, 13, Some(1)),
+                (1, 14, 17, Some(1))
+            ]
+        );
+    }
+
+    #[test]
+    fn oversized_paragraphs_split_at_lines() {
+        let md = vec![words(30); 6].join("\n");
+        let found = chunks(&md, settings(40, 0, 128));
+        let lines: Vec<_> = found
+            .iter()
+            .map(|c| (c.first.get(), c.last.get()))
+            .collect();
+        assert_eq!(lines, vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6)]);
+        assert!(
+            found
+                .iter()
+                .all(|c| c.start_byte == 0 && c.end_byte.is_none())
+        );
+        assert_fits(&md, &found, 128);
+    }
+
+    #[test]
+    fn over_long_lines_split_inside_the_line_at_sentence_ends() {
+        let sentence = format!("{}.", words(7));
+        let md = vec![sentence; 40].join(" ");
+        let doc = Document::parse(&md);
+        let found = chunks(&md, settings(20, 0, 128));
+        assert_fits(&md, &found, 128);
+        assert!(found.len() > 1);
+        assert!(
+            found
+                .iter()
+                .all(|c| c.first.get() == 1 && c.last.get() == 1)
+        );
+        let joined: String = found.iter().map(|c| c.text(&doc)).collect();
+        assert_eq!(joined, md);
+        for piece in &found[..found.len() - 1] {
+            assert!(piece.text(&doc).ends_with(". "), "{:?}", piece.text(&doc));
+        }
+    }
+
+    #[test]
+    fn a_line_with_no_break_points_is_cut_anywhere() {
+        struct Bytes;
+        impl TokenCounter for Bytes {
+            fn count(&self, text: &str) -> usize {
+                text.len()
+            }
+        }
+        let md = "x".repeat(10_000);
+        let doc = Document::parse(&md);
+        let found = chunk_document(&doc, &doc.sections(), settings(50, 0, 400), &Bytes, LABEL);
+        assert!(found.len() > 1);
+        let joined: String = found.iter().map(|c| c.text(&doc)).collect();
+        assert_eq!(joined, md);
+        for chunk in &found {
+            assert!(Bytes.count(&chunk.embed_text(&doc)) + SPECIAL_TOKENS <= 400);
+        }
+    }
+
+    #[test]
+    fn html_tables_split_at_rows_with_the_opening_line_repeated() {
+        let row = format!("<tr>\n<td>{}</td>\n</tr>", words(6));
+        let md = format!(
+            "<table border=\"1\">\n{}\n</table>\n",
+            vec![row; 20].join("\n")
+        );
+        let found = chunks(&md, settings(16, 0, 128));
+        assert!(found.len() > 1);
+        assert_fits(&md, &found, 128);
+        for chunk in &found[1..] {
+            assert_eq!(chunk.repeated_line.map(LineNo::get), Some(1));
+            let doc = Document::parse(&md);
+            assert!(
+                chunk.text(&doc).starts_with("<tr>"),
+                "{:?}",
+                chunk.text(&doc)
+            );
+        }
+    }
+
+    #[test]
+    fn long_heading_paths_are_shortened_in_the_header() {
+        let md = format!("## {}\n{}\n## B\n## C\n## D\n", words(200), words(5));
+        let found = chunks(&md, settings(20, 0, 128));
+        assert_fits(&md, &found, 128);
+        assert!(found[0].header.ends_with(ELLIPSIS));
+        assert!(Words.count(&found[0].header) <= 128 / HEADER_SHARE);
+        assert_eq!(found[0].heading_path.len(), 1);
     }
 
     #[test]
     fn heading_path_follows_nested_headings() {
         let md = "## 4 Design\nintro\n### 4.1 Units\nunits\n#### 4.1.1 Base\nbase\n### 4.2 Systems\nsys\n## 5\n## 6\n## 7\n";
-        let doc = Document::parse(md);
-        let chunks = chunk_document(&doc, &doc.sections(), settings(1, 0, 1000), &Words, LABEL);
-        let paths: Vec<String> = chunks.iter().map(Chunk::heading_path_text).collect();
+        let found = chunks(md, settings(1, 0, 1000));
+        let paths: Vec<String> = found.iter().map(Chunk::heading_path_text).collect();
         assert_eq!(
             paths[..7],
             [

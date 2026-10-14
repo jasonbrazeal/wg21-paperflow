@@ -1121,7 +1121,7 @@ impl PaperServer {
     /// search
     #[tool(
         name = "search",
-        description = "Search paper text. query and type (fulltext, vector, or hybrid) are required. Each hit is a chunk with paper_id, title, url, heading_path, section_index, first_line, last_line, match_lines, text (exactly get_lines over that range), and score. Supports papers, start, end, date_field, author, limit, and cursor; pass nextCursor back as cursor for the next page. Requested papers without markdown are listed in no_markdown."
+        description = "Search paper text. query and type (fulltext, vector, or hybrid) are required. Each hit is a chunk with paper_id, title, url, heading_path, section_index, first_line, last_line, match_lines, text (exactly get_lines over that range, except that a chunk of a line too long for one chunk holds only its part of that line), and score. Supports papers, start, end, date_field, author, limit, and cursor; pass nextCursor back as cursor for the next page. Requested papers without markdown are listed in no_markdown."
     )]
     async fn search(
         &self,

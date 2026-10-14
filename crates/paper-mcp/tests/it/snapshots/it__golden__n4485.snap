@@ -24,4 +24,4 @@ sections: 1115
   18 1430-4497 "7. In lib.string.ios paragraph 5 (effects clause for getline()), second bullet, change"
   19 4498-4498 "1. state in a footnote that this means that xsputn() will never be called by any ostream member and that this is intended."
   20 4499-6319 "2. relax the restriction and allow calling overflow() and xsputn(). Of course, the problem with flush() has to be resolved in some way."
-chunks: 2518
+chunks: 2563

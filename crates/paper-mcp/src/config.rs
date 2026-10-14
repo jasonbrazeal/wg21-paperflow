@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::text::ChunkSettings;
+use crate::text::{ChunkSettings, MIN_MAX_TOKENS};
 
 /// Environment variable naming the TOML configuration file.
 pub const CONFIG_ENV: &str = "PAPER_MCP_CONFIG";
@@ -82,7 +82,8 @@ impl Default for QdrantConfig {
 pub struct ModelConfig {
     /// Where the model weights are cached. Env: `PAPER_MCP_MODEL_CACHE_DIR`.
     pub cache_dir: Option<PathBuf>,
-    /// The longest input embedded, in tokens.
+    /// The longest input the model accepts, in tokens. Chunks are kept to
+    /// `chunks.max_tokens`; a longer search query is truncated.
     pub max_length: usize,
     /// The most padded tokens embedded in one batch.
     pub batch_tokens: usize,
@@ -109,6 +110,9 @@ pub struct ChunkConfig {
     pub target_tokens: usize,
     /// Largest block repeated as overlap, in tokens.
     pub overlap_max_tokens: usize,
+    /// The most tokens in one chunk's embedded text. Larger blocks are
+    /// split.
+    pub max_tokens: usize,
 }
 
 impl Default for ChunkConfig {
@@ -116,6 +120,7 @@ impl Default for ChunkConfig {
         Self {
             target_tokens: 400,
             overlap_max_tokens: 200,
+            max_tokens: 1024,
         }
     }
 }
@@ -342,10 +347,18 @@ impl Config {
         if self.model.queue_depth == 0 {
             return invalid("model.queue_depth", "must be positive");
         }
-        if self.chunks.target_tokens == 0 || self.chunks.target_tokens >= self.model.max_length {
+        if self.chunks.max_tokens < MIN_MAX_TOKENS || self.chunks.max_tokens > self.model.max_length
+        {
+            return invalid(
+                "chunks.max_tokens",
+                &format!("must be between {MIN_MAX_TOKENS} and model.max_length"),
+            );
+        }
+        if self.chunks.target_tokens == 0 || self.chunks.target_tokens > self.chunks.max_tokens / 2
+        {
             return invalid(
                 "chunks.target_tokens",
-                "must be positive and below model.max_length",
+                "must be positive and at most half of chunks.max_tokens",
             );
         }
         if self.chunks.overlap_max_tokens >= self.chunks.target_tokens {
@@ -403,7 +416,7 @@ impl Config {
         ChunkSettings {
             target_tokens: self.chunks.target_tokens,
             overlap_max_tokens: self.chunks.overlap_max_tokens,
-            max_input_tokens: self.model.max_length,
+            max_tokens: self.chunks.max_tokens,
         }
     }
 
@@ -501,5 +514,23 @@ mod tests {
             .map(|e| e.to_string())
             .unwrap_or_default();
         assert!(err.contains("chunks.overlap_max_tokens"), "{err}");
+    }
+
+    #[test]
+    fn chunk_size_limits_are_checked() {
+        let error = |config: &Config| {
+            config
+                .validate()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default()
+        };
+        let mut config = Config::default();
+        config.chunks.max_tokens = 9000;
+        assert!(error(&config).contains("chunks.max_tokens"));
+        config.chunks.max_tokens = 64;
+        assert!(error(&config).contains("chunks.max_tokens"));
+        config.chunks.max_tokens = 600;
+        assert!(error(&config).contains("chunks.target_tokens"));
     }
 }

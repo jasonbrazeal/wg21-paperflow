@@ -24,7 +24,7 @@ const PARTIAL_SECTIONS: usize = 20;
 const SETTINGS: ChunkSettings = ChunkSettings {
     target_tokens: 300,
     overlap_max_tokens: 150,
-    max_input_tokens: 8192,
+    max_tokens: 1024,
 };
 
 fn markdown(paper: &str) -> String {
@@ -77,11 +77,17 @@ fn render(paper: &str, full: bool) -> String {
             .unwrap_or_default();
         let _ = writeln!(
             out,
-            "  s{} c{} {}-{}{repeated} {:?}",
+            "  s{} c{} {}{}-{}{}{repeated} {:?}",
             c.section,
             c.number,
             c.first,
+            if c.start_byte == 0 {
+                String::new()
+            } else {
+                format!(":{}", c.start_byte)
+            },
             c.last,
+            c.end_byte.map(|b| format!(":{b}")).unwrap_or_default(),
             c.heading_path_text()
         );
     }

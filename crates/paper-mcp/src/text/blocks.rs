@@ -8,7 +8,9 @@ use super::{Document, LineNo, Section};
 pub enum BlockKind {
     /// A fenced code block, fence lines included.
     Code,
-    /// A run of lines beginning with `|`.
+    /// A run of lines beginning with `|`, or an HTML table: from a line
+    /// beginning with `<table` to the line holding `</table>`, or to the
+    /// line before a blank line when the table is not closed first.
     Table,
     /// A list item and its continuation lines.
     ListItem,
@@ -40,6 +42,38 @@ fn is_table_line(line: &str) -> bool {
     line.trim_start().starts_with('|')
 }
 
+/// Whether `line`, after leading whitespace, begins with the HTML tag
+/// `<name`, in any case, followed by whitespace, `>`, `/`, or nothing.
+fn starts_with_tag(line: &str, name: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix('<') else {
+        return false;
+    };
+    let Some(head) = rest.get(..name.len()) else {
+        return false;
+    };
+    head.eq_ignore_ascii_case(name)
+        && rest[name.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || c == '>' || c == '/')
+}
+
+fn opens_html_table(line: &str) -> bool {
+    starts_with_tag(line, "table")
+}
+
+fn closes_html_table(line: &str) -> bool {
+    const CLOSE: &[u8] = b"</table";
+    line.as_bytes()
+        .windows(CLOSE.len())
+        .any(|w| w.eq_ignore_ascii_case(CLOSE))
+}
+
+/// Whether `line` begins an HTML table row.
+pub(super) fn opens_html_row(line: &str) -> bool {
+    starts_with_tag(line, "tr")
+}
+
 fn is_list_item(line: &str) -> bool {
     let trimmed = line.trim_start();
     let rest = if let Some(rest) = trimmed.strip_prefix(['-', '*', '+']) {
@@ -64,7 +98,11 @@ fn is_heading(line: &str) -> bool {
 /// Whether line `index` starts a block other than a paragraph.
 fn starts_other_block(doc: &Document<'_>, index: usize) -> bool {
     let line = doc.lines()[index];
-    doc.fence_end(index).is_some() || is_heading(line) || is_table_line(line) || is_list_item(line)
+    doc.fence_end(index).is_some()
+        || is_heading(line)
+        || is_table_line(line)
+        || opens_html_table(line)
+        || is_list_item(line)
 }
 
 /// Divides a section into blocks.
@@ -95,6 +133,12 @@ pub(super) fn split(doc: &Document<'_>, section: &Section) -> Vec<Block> {
         } else if is_table_line(line) {
             let mut stop = index;
             while stop < end && is_table_line(lines[stop + 1]) {
+                stop += 1;
+            }
+            (BlockKind::Table, stop)
+        } else if opens_html_table(line) {
+            let mut stop = index;
+            while !closes_html_table(lines[stop]) && stop < end && !is_blank(lines[stop + 1]) {
                 stop += 1;
             }
             (BlockKind::Table, stop)
@@ -172,6 +216,27 @@ mod tests {
                 (Code, 5, 7)
             ]
         );
+    }
+
+    #[test]
+    fn html_tables_are_tables() {
+        use BlockKind::*;
+        assert_eq!(
+            kinds(
+                "text\n<TABLE border=\"1\">\n<tr>\n<td>a</td>\n</tr>\n</table>\nafter\n\n<table>\n<tr>\n\nlate"
+            ),
+            vec![
+                (Paragraph, 1, 1),
+                (Table, 2, 6),
+                (Paragraph, 7, 8),
+                (Table, 9, 11),
+                (Paragraph, 12, 12)
+            ]
+        );
+        assert!(opens_html_table("  <table>"));
+        assert!(!opens_html_table("<tablex>"));
+        assert!(opens_html_row("<TR class=\"r\">"));
+        assert!(!opens_html_row("<track>"));
     }
 
     #[test]
