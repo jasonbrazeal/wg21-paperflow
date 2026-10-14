@@ -243,7 +243,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-3>
 
-### Step 3: Structure-aware Markdown chunker
+### Step 3: Structure-aware Markdown chunker [completed]
 
 - Component: paper-mcp-core
 - `src/chunk.rs`: `Chunk { heading_path: Vec<String>, start: usize, end: usize, text: String }` with 1-based inclusive `start` and exclusive `end`; `Section { level, heading, start, end }` and `outline(md) -> Vec<Section>` (reused by `get_paper_outline`); `chunk_markdown(md: &str, budget: usize, count_tokens: &dyn Fn(&str) -> usize) -> Vec<Chunk>`. It skips YAML front matter and `<style>` blocks from chunk bodies while counting their lines, splits on `##`/`###` headings, treats fenced code blocks, GFM pipe tables and `<!-- tomd:mixed-table -->` HTML tables as atomic blocks, splits over-budget sections only at block boundaries, and emits a lone oversized block as its own chunk split at line boundaries. A `CHUNKER_VERSION` constant feeds the index-format version.
