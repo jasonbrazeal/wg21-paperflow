@@ -299,3 +299,154 @@ fn sqlite_backend_is_send_and_static() {
     fn assert_bounds<T: Send + 'static>() {}
     assert_bounds::<SqliteBackend>();
 }
+
+impl Workspace {
+    fn insert_listed(&self, paper_id: &str, year: &str) {
+        self.raw_connection()
+            .execute(
+                "INSERT INTO papers (paper_id, year) VALUES (?1, ?2)",
+                rusqlite::params![paper_id, year],
+            )
+            .unwrap_or_else(|e| panic!("insert row: {e}"));
+    }
+
+    /// Seeds rows out of order, across years, with one non-paper-number id.
+    fn seed_listing(&self) {
+        for (paper_id, year) in [
+            ("P2300R10", "2024"),
+            ("N4950", "2023"),
+            ("P2300R2", "2021"),
+            ("P2300R0", "2021"),
+            ("P10R1", "2024"),
+            ("P2300R9", "2024"),
+            ("SD-1", "2024"),
+            ("P2300", "2020"),
+            ("D2300R11", "2024"),
+        ] {
+            self.insert_listed(paper_id, year);
+        }
+    }
+}
+
+fn nums(raw: &[&str]) -> Vec<PaperNum> {
+    raw.iter()
+        .map(|r| PaperNum::parse(r).unwrap_or_else(|e| panic!("parse {r}: {e}")))
+        .collect()
+}
+
+#[test]
+fn list_all_paper_ids_is_sorted_and_skips_non_paper_numbers() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.seed_listing();
+
+    let ids = backend
+        .list_all_paper_ids()
+        .unwrap_or_else(|e| panic!("list_all_paper_ids: {e}"));
+
+    assert_eq!(
+        ids,
+        nums(&[
+            "D2300R11", "N4950", "P10R1", "P2300", "P2300R0", "P2300R10", "P2300R2", "P2300R9",
+        ])
+    );
+}
+
+#[test]
+fn list_all_paper_ids_empty_store_is_empty() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+
+    let ids = backend
+        .list_all_paper_ids()
+        .unwrap_or_else(|e| panic!("list_all_paper_ids: {e}"));
+
+    assert!(ids.is_empty(), "unexpected ids: {ids:?}");
+}
+
+#[test]
+fn list_paper_ids_for_year_returns_only_that_year_sorted() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.seed_listing();
+
+    let ids = backend
+        .list_paper_ids_for_year(2024)
+        .unwrap_or_else(|e| panic!("list_paper_ids_for_year: {e}"));
+
+    assert_eq!(ids, nums(&["D2300R11", "P10R1", "P2300R10", "P2300R9"]));
+}
+
+#[test]
+fn list_paper_ids_for_empty_year_is_empty() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.seed_listing();
+
+    let ids = backend
+        .list_paper_ids_for_year(1999)
+        .unwrap_or_else(|e| panic!("list_paper_ids_for_year: {e}"));
+
+    assert!(ids.is_empty(), "unexpected ids: {ids:?}");
+}
+
+#[test]
+fn list_revisions_is_newest_first_by_numeric_revision() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.seed_listing();
+
+    for query in ["P2300R2", "P2300", "p2300r99"] {
+        let rows = backend
+            .list_revisions(&nums(&[query])[0])
+            .unwrap_or_else(|e| panic!("list_revisions {query}: {e}"));
+        let ids: Vec<&str> = rows.iter().map(|r| r.paper_num.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["P2300R10", "P2300R9", "P2300R2", "P2300R0", "P2300"],
+            "query {query}"
+        );
+    }
+}
+
+#[test]
+fn list_revisions_returns_full_rows() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.raw_connection()
+        .execute(FULL_INSERT, [])
+        .unwrap_or_else(|e| panic!("insert full row: {e}"));
+
+    let rows = backend
+        .list_revisions(&paper_num())
+        .unwrap_or_else(|e| panic!("list_revisions: {e}"));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].previous_version, "P4003R1");
+    assert_eq!(rows[0].mailing_date, "2026-02");
+    assert_eq!(rows[0].authors, ["Alice Liddell", "Bob Carroll"]);
+}
+
+#[test]
+fn list_revisions_unknown_paper_number_is_empty() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.seed_listing();
+
+    let rows = backend
+        .list_revisions(&nums(&["P230R1"])[0])
+        .unwrap_or_else(|e| panic!("list_revisions: {e}"));
+
+    assert!(rows.is_empty(), "unexpected rows: {rows:?}");
+}
+
+#[test]
+fn tool_dir_is_named_subdirectory_of_workspace_and_not_created() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+
+    let dir = backend.tool_dir("paper-mcp");
+
+    assert_eq!(dir, ws.path().join("paper-mcp"));
+    assert!(!dir.exists(), "tool_dir must not create {}", dir.display());
+}

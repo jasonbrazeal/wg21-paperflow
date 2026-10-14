@@ -1,6 +1,6 @@
 //! The SQLite-backed [`StorageBackend`] implementation.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use paperstore::{
     Error, PaperNum, PaperRow, Result, StorageBackend, decode_authors, default_workspace_dir,
@@ -13,6 +13,7 @@ use crate::schema;
 #[derive(Debug)]
 pub struct SqliteBackend {
     conn: Connection,
+    workspace_dir: PathBuf,
 }
 
 impl SqliteBackend {
@@ -29,7 +30,10 @@ impl SqliteBackend {
         conn.execute_batch("PRAGMA busy_timeout = 5000")
             .map_err(backend_err)?;
         schema::ensure_schema(&conn).map_err(backend_err)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            workspace_dir: workspace_dir.to_path_buf(),
+        })
     }
 
     /// Opens the database under `$WG21_DATA_DIR`.
@@ -53,13 +57,9 @@ impl StorageBackend for SqliteBackend {
     fn meta(&self, num: &PaperNum) -> Result<PaperRow> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT paper_id, year, title, authors, target_group, intent, url, \
-                 document_date, mailing_date, disposition, previous_version, \
-                 source_file, markdown_path, dissect_path, agora_path, assay_path, \
-                 citations_extracted_at, line_count, status, error \
-                 FROM papers WHERE paper_id = ?",
-            )
+            .prepare(&format!(
+                "SELECT {ROW_COLUMNS} FROM papers WHERE paper_id = ?"
+            ))
             .map_err(backend_err)?;
         stmt.query_row([num.as_str()], row_to_paper)
             .optional()
@@ -95,6 +95,92 @@ impl StorageBackend for SqliteBackend {
             return Err(Error::missing_markdown(num.clone()));
         }
         Ok(std::fs::read_to_string(&path)?)
+    }
+
+    /// Returns every stored paper number, sorted ascending.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Backend`] when the query fails.
+    fn list_all_paper_ids(&self) -> Result<Vec<PaperNum>> {
+        self.query_paper_ids("SELECT paper_id FROM papers", [])
+    }
+
+    /// Returns the paper numbers for mailing year `year`, sorted ascending.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Backend`] when the query fails.
+    fn list_paper_ids_for_year(&self, year: u16) -> Result<Vec<PaperNum>> {
+        self.query_paper_ids(
+            "SELECT paper_id FROM papers WHERE year = ?",
+            [year.to_string()],
+        )
+    }
+
+    /// Returns every revision of the paper number of `num`, newest first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Backend`] when the query fails.
+    fn list_revisions(&self, num: &PaperNum) -> Result<Vec<PaperRow>> {
+        let (base, _) = num.split_revision();
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "SELECT {ROW_COLUMNS} FROM papers \
+                 WHERE paper_id = ?1 OR paper_id LIKE ?1 || 'R%'"
+            ))
+            .map_err(backend_err)?;
+        let rows = stmt
+            .query_map([base], row_to_paper)
+            .map_err(backend_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend_err)?;
+        // LIKE does not check that only digits follow the `R`; dropping rows
+        // that fail to parse keeps exactly this number's revisions, since any
+        // matching id that parses normalizes to `<base>` or `<base>R<digits>`.
+        let mut keyed: Vec<(Option<u32>, PaperRow)> = rows
+            .into_iter()
+            .filter_map(|row| {
+                let rev = PaperNum::parse(&row.paper_num).ok()?.split_revision().1;
+                Some((rev, row))
+            })
+            .collect();
+        keyed.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.paper_num.cmp(&b.1.paper_num))
+        });
+        Ok(keyed.into_iter().map(|(_, row)| row).collect())
+    }
+
+    fn tool_dir(&self, tool: &str) -> PathBuf {
+        self.workspace_dir.join(tool)
+    }
+}
+
+const ROW_COLUMNS: &str = "paper_id, year, title, authors, target_group, intent, url, \
+     document_date, mailing_date, disposition, previous_version, \
+     source_file, markdown_path, dissect_path, agora_path, assay_path, \
+     citations_extracted_at, line_count, status, error";
+
+impl SqliteBackend {
+    fn query_paper_ids(&self, sql: &str, params: impl rusqlite::Params) -> Result<Vec<PaperNum>> {
+        let mut stmt = self.conn.prepare(sql).map_err(backend_err)?;
+        let raw = stmt
+            .query_map(params, |row| row.get::<_, String>(0))
+            .map_err(backend_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend_err)?;
+        // Non-paper-number ids such as `SD-1` live in the same table; they
+        // are not addressable through `PaperNum`, so listings skip them.
+        let mut ids: Vec<PaperNum> = raw
+            .iter()
+            .filter_map(|id| PaperNum::parse(id).ok())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        Ok(ids)
     }
 }
 
