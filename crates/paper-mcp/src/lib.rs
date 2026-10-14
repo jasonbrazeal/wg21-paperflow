@@ -10,11 +10,18 @@
 //! selectors (paper ids, a year, or `all`) into paper numbers through the
 //! [`paperstore::StorageBackend`] abstraction. [`chunk`] splits a paper's
 //! tomd Markdown into heading-scoped chunks with exact source line ranges.
+//! [`prefix`] builds the deterministic paper and section context prepended
+//! to each chunk for embedding and BM25, and [`format`](mod@format) provides the content
+//! hash and index-format version that decide when a paper is stale.
 
 pub mod chunk;
 pub mod error;
+pub mod format;
+pub mod prefix;
 pub mod selection;
 
 pub use chunk::{CHUNKER_VERSION, Chunk, Section, chunk_markdown, outline};
 pub use error::{Error, Result};
+pub use format::{IndexFormatVersion, content_hash};
+pub use prefix::{PREFIX_VERSION, build_prefix, prefixed_text};
 pub use selection::{Selector, parse_selectors, resolve, resolve_latest};

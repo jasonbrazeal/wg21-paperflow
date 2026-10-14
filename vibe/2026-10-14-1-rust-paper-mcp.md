@@ -253,7 +253,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-4>
 
-### Step 4: Deterministic prefix, content hash and index-format version
+### Step 4: Deterministic prefix, content hash and index-format version [completed]
 
 - Component: paper-mcp-core
 - `src/prefix.rs`: `build_prefix(row: &PaperRow, heading_path: &[String]) -> String` from paper id with revision, title, authors, target_group, document date and heading path in a fixed order and layout; `prefixed_text(prefix, chunk) -> String`; `PREFIX_VERSION` constant.
