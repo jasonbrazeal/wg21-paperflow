@@ -10,13 +10,25 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Deterministic stand-in models for tests and CI, which have no model files.
+test-models = []
+
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
+# Without default features fastembed has no Hugging Face Hub client, so it
+# cannot download models; only ONNX Runtime's binaries are fetched, at build time.
+fastembed = { version = "7.1.1", default-features = false, features = ["ort-download-binaries-rustls-tls"] }
+# Pinned exactly: ort release candidates break API between releases, and
+# fastembed requires this exact version.
+ort = { version = "=2.0.0-rc.13", default-features = false }
 paperstore = { version = "0.1.0", path = "../paperstore" }
 paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
+serde_json = "1.0.151"
 sha2 = "0.11.0"
 thiserror = "2.0.20"
+tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 

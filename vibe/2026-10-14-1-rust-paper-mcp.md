@@ -264,7 +264,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-5>
 
-### Step 5: Embedder and reranker traits with local backends
+### Step 5: Embedder and reranker traits with local backends [completed]
 
 - Component: paper-mcp-core
 - `src/model.rs`: `Embedder` trait (`id() -> &str`, `dim() -> usize`, `max_tokens() -> usize`, `count_tokens(&str) -> usize`, `embed_documents(&[String])`, `embed_query(&str)`) and `Reranker` trait (`id()`, `rerank(query, &[String]) -> Vec<f32>`).
