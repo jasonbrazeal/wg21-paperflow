@@ -1,0 +1,24 @@
+[package]
+name = "paper-mcp"
+description = "Index WG21 papers and serve search over MCP"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+clap = { version = "4.6.6", features = ["derive"] }
+paperstore = { version = "0.1.0", path = "../paperstore" }
+paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
+thiserror = "2.0.20"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+[dev-dependencies]
+temp-env = "0.3.6"
+tempfile = "3.27.0"

@@ -229,7 +229,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-2>
 
-### Step 2: paper-mcp crate scaffold and paper selection
+### Step 2: paper-mcp crate scaffold and paper selection [completed]
 
 - Component: paper-mcp-core
 - Placement: after paperstore-listing, which selection depends on. The core component is the indexing half of the system and is useful on its own (it builds an index that later components read).
