@@ -172,30 +172,226 @@ Unit tests cover parsing, chunking, prefixing and auth. Integration tests build 
   - When paperstore lists a newer revision than the index holds, the indexed older revision has `is_latest = false`, so that paper drops out of default search until the newer revision is indexed.
   - Model files are provisioned into the model directory out of band, because the binaries never download.
   - Paperstore has no mailing field. `mailing_date` (`YYYY-MM`) serves as the mailing (`crates/paperstore/src/row.rs`).
+- Decisions added during decomposition (not confirmed by the user):
+  - The new crate and binary are named `paper-mcp` (`crates/paper-mcp`), and the evaluation harness is a second binary, `paper-mcp-eval`, in the same crate.
+  - The index lives in `$WG21_DATA_DIR/paper-mcp/` (LanceDB under `lancedb/`, writer lock `index.lock`), located through a new `StorageBackend::tool_dir` method so no caller builds paths from the workspace dir.
+  - The bearer token comes from `PAPER_MCP_TOKEN` or `--token-file`, and the model directory from `PAPER_MCP_MODEL_DIR` or `--model-dir`.
+  - Integration tests and CI use deterministic test-double models behind a `test-models` cargo feature, so CI needs no model files.
+  - Hybrid fusion uses RRF with a named constant `RRF_K` (default 60).
+  - The writer lock uses `std::fs::File::try_lock` (stable since Rust 1.89).
 
 </decision-record>
 <project-survey>
 
 ## Project Survey
 
-None
+- Status: complete
+- Build command: Rust `cargo build --workspace --locked` (CI builds `cargo build --release -p paperweight --locked`; needs the `vendor/promptforge` submodule checked out). Python has no build step: `uv sync --all-packages --group dev`.
+- Focused test command pattern: Rust `cargo test -p <crate> <test_name_filter> --locked`; Python `uv run pytest <path/to/test_file.py>::<test_name>`.
+- Component test command pattern: Rust `cargo test -p <crate> --locked`; Python `uv run pytest packages/<package>/tests` (or `uv run --package <package> pytest`).
+- Full-suite test command: `cargo test --workspace --locked` plus `uv run pytest` (pytest testpaths cover every package except `whisker`, plus `tests/`; `network`-marked tests are deselected by default).
+- Linter command: Rust `cargo clippy --workspace --all-targets --locked` (workspace lints deny `clippy::all`, `unwrap_used`, `expect_used`; warn `pedantic`; forbid `unsafe_code`). Python `uv run ruff check packages tests` and `uv run pyright packages` (pyright is non-blocking in CI).
+- Formatter check command: Rust `cargo fmt --all --check` (`rustfmt.toml`: `style_edition = "2024"`). Python: None (CI runs no format check).
+- Docs command: Rust `cargo doc --workspace --no-deps` (rustdoc denies broken and private intra-doc links; `missing_docs` warns). Python: None.
+- Test placement and naming conventions: Rust unit tests live in `#[cfg(test)] mod tests` at the bottom of each source file; integration tests live in a single `tests/it/main.rs` binary per crate (`crates/paperstore-sqlite/tests/it/`); dev-deps `tempfile` and `temp-env` for filesystem and env isolation. Python tests live in `packages/<name>/tests/test_<topic>.py` with a per-package `conftest.py` and `fixtures/` dir; cross-package integration tests live in top-level `tests/` (`test_end_to_end_*.py`); live-network tests carry `@pytest.mark.network`.
+- Directory map:
+  - `crates/`: Rust Cargo workspace members. `paperstore` (abstract storage API: `StorageBackend` trait, `PaperRow`, `PaperNum`, `Error`, `WG21_DATA_DIR` resolution), `paperstore-sqlite` (rusqlite backend), `paperweight` (CLI running a promptforge prompt against a paper; extra bin `promptforge-cli`).
+  - `vendor/promptforge/`: git submodule, its own Cargo workspace, excluded from the root workspace; `paperweight` depends on its `harness` crate by path.
+  - `packages/`: Python uv workspace members: `paperstore`, `mailing`, `tomd`, `pipeline`, `agora`, `assay`, `cli`, `preview`, `cpp-mcp` (Python MCP server over C++ sources), `whisker`.
+  - `tests/`: cross-package Python integration tests.
+  - `study/`, `research/`, `herald/`: experiments, research notes, design docs (not production).
+  - `data/`: local workspace sample (`paperstore.db`, `paperstore/` with `<pid>.md` etc.).
+  - `vibe/`: planning artifacts. `html/`: static output. `target/`: Cargo build output (untracked).
+  - Root docs: `CLAUDE.md`, `ARCHITECTURE.md`, `DESIGN.md`, `MODELS.md`, `SERVICES.toml` (service and classifier inventory), `justfile` (mounts `packages/tomd/justfile`).
+  - `.github/workflows/tests.yml`: ruff, pyright, per-package pytest matrix (ubuntu, windows), `paperweight` cargo build and test, integration tests.
+- Component boundaries: Rust `paperstore` has no internal deps; `paperstore-sqlite` depends on `paperstore`; `paperweight` depends on `paperstore`, `paperstore-sqlite`, and vendored `harness`. Python `paperstore` has no internal deps; `mailing`, `tomd`, `pipeline` depend on `paperstore`; `agora`, `assay` (and dissect) depend on `pipeline`; `cli` sits on top and orchestrates. Production packages never import from `study`. The Rust and Python sides share only the on-disk workspace (`paperstore.db` plus `paperstore/` files), not code.
+- Conventions summary: storage only through the `StorageBackend` abstraction, never hand-built paths; library code returns data and callers (CLI) persist; Rust edition 2024, workspace-inherited package metadata and `[lints] workspace = true` in every crate, `thiserror` errors in libraries and `anyhow` in binaries, no `unwrap`/`expect`, `//!` crate docs and doc comments on public items; Python 3.12, file-level imports only, `logging` not `print`, named module-level constants for tunables, `__init__.py` carries re-exports only, BSL-1.0 headers on new files; LLM calls go through `pipeline.run_agent`/`run_task` with serial-by-default determinism; no em dashes in prose.
 
 </project-survey>
 <execution-plan>
 
 ## Execution Instructions
 
-- Work items:
-  - Raise the workspace `rust-version` in `Cargo.toml` to 1.91.
-  - Add paperstore listing methods to the trait and the SQLite backend.
-  - Create the new crate with `index` and `serve` subcommands.
-  - Implement selection, chunker, prefix, embedder and reranker, index store and search modules.
-  - Implement the eight MCP tools on rmcp with axum and bearer middleware.
-  - Build the golden query set and the evaluation harness, and select the models.
-  - Add CI build and test steps for the new and paperstore crates.
-- Dependencies and verification:
-  - The paperstore listing methods are needed by selection, `list_revisions` and unversioned-id resolution.
-  - Model selection depends on the golden query set and the evaluation harness.
-  - Verify with the Testing Plan exit criteria.
+Components in dependency order: paperstore listing (1), paper-mcp core library and `index` command (2 to 7), search and paging (8 to 9), MCP server (10 to 12), retrieval evaluation and model selection (13 to 14), CI (15). Every step lands as one local commit containing its code and tests, and must pass `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked` and the focused `cargo test -p <crate> --locked` command for the crates it touches. New `.rs` files carry the BSL-1.0 header and no em dashes.
+
+<step-1>
+
+### Step 1: Paperstore listing methods and tool directory
+
+- Component: paperstore-listing
+- Placement: first, because selection, unversioned-id resolution, `list_revisions` and the index location all go through the paperstore abstraction.
+- Pieces: one piece, built sequentially (trait, then backend).
+- `crates/paperstore/src/backend.rs`: add to `StorageBackend` the methods `list_all_paper_ids(&self) -> Result<Vec<PaperNum>>`, `list_paper_ids_for_year(&self, year: u16) -> Result<Vec<PaperNum>>`, `list_revisions(&self, num: &PaperNum) -> Result<Vec<PaperRow>>` (every revision of the paper number of `num`, newest first by revision) and `tool_dir(&self, tool: &str) -> PathBuf` (a per-tool subdirectory under the workspace, so callers never build paths from the workspace dir). Add a helper on `PaperNum` (`crates/paperstore/src/num.rs`) that returns the paper number without revision and the revision number, used to group revisions.
+- `crates/paperstore-sqlite/src/backend.rs`: implement the methods with SQL mirroring `list_all_paper_ids` and `list_papers_for_year` in `packages/paperstore/src/paperstore/sqlite_backend.py`, sorted deterministically.
+- Tests: unit tests for the `PaperNum` helper in `num.rs`; integration tests in `crates/paperstore-sqlite/tests/it/` against a tempdir SQLite fixture covering all ids, one year, an empty year, multi-revision ordering, an unknown paper number and `tool_dir` placement.
+
+</step-1>
+
+<step-2>
+
+### Step 2: paper-mcp crate scaffold and paper selection
+
+- Component: paper-mcp-core
+- Placement: after paperstore-listing, which selection depends on. The core component is the indexing half of the system and is useful on its own (it builds an index that later components read).
+- Pieces: scaffold and selection (step 2), chunk and prefix (steps 3 to 4), models (step 5), index store (step 6), ingest command (step 7). Built sequentially, because each piece consumes the previous one's types.
+- `crates/paper-mcp/Cargo.toml`: workspace-inherited package metadata, `[lints] workspace = true`, deps `paperstore`, `paperstore-sqlite`, `clap`, `anyhow`, `thiserror`, `tracing`, `tracing-subscriber`; dev-deps `tempfile`, `temp-env`. Update `Cargo.lock`.
+- `crates/paper-mcp/src/lib.rs` (crate docs, module re-exports), `src/main.rs` (clap `Cli` with `index` and `serve` subcommands, `serve` returning a not-yet-implemented error until step 10), `src/error.rs` (`thiserror` library error enum).
+- `src/selection.rs`: `Selector` enum (`Ids(Vec<PaperNum>)`, `Year(u16)`, `All`), `parse_selectors(&[String]) -> Result<Vec<Selector>>` (rejects mixing `all` with others and malformed input), `resolve(&dyn StorageBackend, &[Selector]) -> Result<Vec<PaperNum>>` (deduplicated, sorted), `resolve_latest(&dyn StorageBackend, &PaperNum) -> Result<PaperNum>` (unversioned id to highest listed revision; versioned id passes through after an existence check).
+- Tests: unit tests in `selection.rs` for ids, year, `all`, mixed and invalid input and latest-revision resolution using an in-memory `StorageBackend` test double.
+
+</step-2>
+
+<step-3>
+
+### Step 3: Structure-aware Markdown chunker
+
+- Component: paper-mcp-core
+- `src/chunk.rs`: `Chunk { heading_path: Vec<String>, start: usize, end: usize, text: String }` with 1-based inclusive `start` and exclusive `end`; `Section { level, heading, start, end }` and `outline(md) -> Vec<Section>` (reused by `get_paper_outline`); `chunk_markdown(md: &str, budget: usize, count_tokens: &dyn Fn(&str) -> usize) -> Vec<Chunk>`. It skips YAML front matter and `<style>` blocks from chunk bodies while counting their lines, splits on `##`/`###` headings, treats fenced code blocks, GFM pipe tables and `<!-- tomd:mixed-table -->` HTML tables as atomic blocks, splits over-budget sections only at block boundaries, and emits a lone oversized block as its own chunk split at line boundaries. A `CHUNKER_VERSION` constant feeds the index-format version.
+- Tests: unit tests with inline Markdown plus fixtures derived from `data/paperstore/p2169r4.md` and `data/paperstore/p2322r4.md` copied into `crates/paper-mcp/tests/fixtures/`: code fences, pipe tables and mixed HTML tables kept whole; front matter and `<style>` excluded; heading paths and line ranges exact (slicing the source lines by each range reproduces the chunk text); budget splitting only at block boundaries; headingless documents.
+
+</step-3>
+
+<step-4>
+
+### Step 4: Deterministic prefix, content hash and index-format version
+
+- Component: paper-mcp-core
+- `src/prefix.rs`: `build_prefix(row: &PaperRow, heading_path: &[String]) -> String` from paper id with revision, title, authors, target_group, document date and heading path in a fixed order and layout; `prefixed_text(prefix, chunk) -> String`; `PREFIX_VERSION` constant.
+- `src/format.rs`: `content_hash(md: &str) -> String` (SHA-256 hex via `sha2`) and `IndexFormatVersion { chunker, prefix, embedder_id, reranker_id }` with a stable string rendering stored in index records.
+- Tests: prefix output is byte-identical across calls for a given row and heading path, field order and empty-field handling are fixed, the hash is stable for known input, and changing any version component changes the rendered format version.
+
+</step-4>
+
+<step-5>
+
+### Step 5: Embedder and reranker traits with local backends
+
+- Component: paper-mcp-core
+- `src/model.rs`: `Embedder` trait (`id() -> &str`, `dim() -> usize`, `max_tokens() -> usize`, `count_tokens(&str) -> usize`, `embed_documents(&[String])`, `embed_query(&str)`) and `Reranker` trait (`id()`, `rerank(query, &[String]) -> Vec<f32>`).
+- `src/model/onnx.rs`: `OnnxEmbedder` and `OnnxReranker` built on `fastembed` with `ort` pinned exactly (`=2.0.0-rc.x`), loading only from files in a configured model directory (`--model-dir` or `PAPER_MCP_MODEL_DIR`) through fastembed's user-defined model APIs, never downloading. Missing or unreadable model files produce a clear startup error naming the expected files. The candle backend stays a fallback behind the same trait and is not built now.
+- `src/model/fake.rs` behind cargo feature `test-models`: `HashEmbedder` (deterministic token-hash vectors, so lexically similar text lands close) and `IdentityReranker`, used by integration tests and CI so they need no model files.
+- Tests: fakes are deterministic and dimension-correct; loading from an empty or partial model directory fails with the expected error and performs no network access; an `#[ignore]` test exercises the real ONNX backends when `PAPER_MCP_MODEL_DIR` is set.
+
+</step-5>
+
+<step-6>
+
+### Step 6: LanceDB index store
+
+- Component: paper-mcp-core
+- `Cargo.toml` (root): raise workspace `rust-version` to 1.91. `crates/paper-mcp/Cargo.toml`: add `lancedb = "=0.40.0"` and the matching `arrow-array`/`arrow-schema` versions, pinned exactly; update `Cargo.lock`.
+- `src/store.rs`: `IndexStore` trait with `freshness(&PaperNum) -> Option<(content_hash, format_version)>`, `upsert_paper(PaperRecords)` (replaces every chunk and the metadata record of one revision), `delete_paper`, `set_latest(paper_number, latest: &PaperNum)` (recomputes `is_latest` for every indexed revision of the number), `search_vector`, `search_keyword`, `count_keyword_matches`, `search_metadata`, `optimize`. Record types `ChunkRecord` (paper id, revision, paper number, `is_latest`, heading path, start, end, unprefixed text, prefixed text, vector, content hash, format version, filter fields) and `MetaRecord` (the full `PaperRow` plus `is_latest`, `has_markdown`, content hash, format version).
+- `src/filter.rs`: `SearchFilter` (paper id, revision, target_group, author, year, mailing_date, document_date range, intent, latest-only flag) rendered to a LanceDB SQL predicate with string escaping, shared by every search side.
+- `src/store/lance.rs`: `LanceStore` opening `$tool_dir/lancedb` with `read_consistency_interval` set; `chunks` and `paper_meta` tables; vector index on chunk vectors; FTS indexes on prefixed chunk text and on metadata title and authors with a tokenizer configured for C++ text (stemming and stop-word removal off, base tokenizer and lowercasing per the step 14 evaluation, defaulting to whitespace-based splitting that keeps `::`, `_` and `<>`-bearing identifiers searchable); keyword queries set the FTS limit from `count_keyword_matches` so every match returns.
+- Tests: tempdir integration tests in `crates/paper-mcp/tests/it/` using `HashEmbedder`: upsert, replace and delete by paper; freshness lookup; `is_latest` recomputation; filter predicates including quote escaping; keyword search finds `std::move_only_function` and returns every match; metadata search by title and author; reads from a second `LanceStore` handle see writes after `optimize`.
+
+</step-6>
+
+<step-7>
+
+### Step 7: Ingest pipeline and `index` command
+
+- Component: paper-mcp-core
+- `src/ingest.rs`: `IndexLock` holding an exclusive lock on `$tool_dir/index.lock` via `std::fs::File::try_lock`, failing fast when another writer holds it; `index_papers(backend, store, embedder, nums, force, workers) -> IndexReport` running per paper: `meta`, `paper_md`, freshness check against content hash and format version (skip unless `--force`), chunk, prefix, embed, upsert, then `set_latest` per touched paper number using `list_revisions`; `MissingMarkdown` writes only the metadata record and is reported as no content; per-paper errors are collected without aborting; `optimize` runs at the end. `--workers N` bounds concurrent paper preparation while store writes stay serialized.
+- `src/main.rs`: `index <selector>... [--force] [--workers N] [--model-dir]` wiring with startup checks for `WG21_DATA_DIR` and model files, a per-paper summary on stderr, and a non-zero exit if any paper failed.
+- Tests: integration tests with a fixture workspace under `crates/paper-mcp/tests/fixtures/workspace/` (SQLite db plus Markdown) containing a multi-revision paper (P2300R0 to R10 metadata, small Markdown), one PDF-origin and one HTML-origin paper and one paper without Markdown, using `HashEmbedder`: selection by ids, year and `all` matches paperstore listings; rerun without `--force` skips every unchanged paper; `--force` reindexes; changing Markdown triggers reindex; an injected per-paper failure is reported and yields a non-zero result while other papers index; a held lock blocks a second writer.
+
+</step-7>
+
+<step-8>
+
+### Step 8: Cursor cache
+
+- Component: search-and-paging
+- Placement: after paper-mcp-core, whose store it queries. Search and paging is a reusable query library that the server and the evaluation harness both call.
+- Pieces: cursor cache (step 8) and search pipeline (step 9), built sequentially: the cache is pure and generic, and the pipeline produces the result lists it stores.
+- `src/cursor.rs`: `CursorCache<T>` with configurable page size (default 20), idle TTL (default 15 minutes) and capacity (default 64, LRU eviction), `start(results: Vec<T>) -> Page<T>` and `next(cursor: &str) -> Result<Page<T>, CursorError>`; `Page { items, next_cursor: Option<String> }`; opaque random cursor ids; `CursorError::Expired`/`Unknown` with a message telling the client to rerun the search. Time comes from an injectable clock for tests.
+- Tests: unit tests for page stability, exact page-size boundaries (empty, one page, exact multiple), TTL expiry, LRU eviction order and the unknown-cursor error.
+
+</step-8>
+
+<step-9>
+
+### Step 9: Search pipeline
+
+- Component: search-and-paging
+- `src/search.rs`: `SearchMode` (`Vector`, `Keyword`, `Hybrid`), `SearchRequest` (query, mode, `SearchFilter`, `all_revisions`, `top_k` override), `SearchParams` (`top_k` default 1000, `rerank_depth` default 150), `SearchHit` (paper id with revision, title, heading path, start, end, unprefixed text, score), `search_chunks(store, embedder, reranker, params, req) -> Vec<SearchHit>`: latest-only filter unless `all_revisions` or a versioned paper id; keyword returns every match, vector returns `top_k`, hybrid fuses every keyword match with the `top_k` nearest via RRF (`RRF_K` constant, deduplicated by chunk); the reranker reorders the first `rerank_depth` hits and the rest keep their order. `search_metadata(store, req) -> Vec<MetaRecord>` returns every matching metadata row.
+- Tests: unit tests for RRF fusion and rerank-depth splicing; integration tests on the step 7 fixture index: result counts equal every keyword match, `top_k`, and their deduplicated union for the three modes; default search for P2300 returns only P2300R10 chunks, `all_revisions` returns other revisions, and `P2300R4` restricts to that revision; filters apply to every side.
+
+</step-9>
+
+<step-10>
+
+### Step 10: Server configuration, bearer auth and Streamable HTTP host
+
+- Component: mcp-server
+- Placement: after search-and-paging, whose search functions and cursor cache back the tools. This component is the shippable shared service.
+- Pieces: host and auth (step 10), read tools (step 11), search tools (step 12). Sequential: tools need the host, and read tools come first because search-tool tests round-trip through `get_paper_lines`.
+- `crates/paper-mcp/Cargo.toml`: add `rmcp` 3.x (features `server`, `macros`, `transport-streamable-http-server`, plus `client` and `transport-streamable-http-client` as dev features), `axum`, `tokio`, `subtle`, `schemars`, `serde`.
+- `src/server/config.rs`: `ServeConfig` (bind address, token from `PAPER_MCP_TOKEN` or `--token-file`, model dir, `top_k`, `rerank_depth`, page size, cursor TTL, cursor capacity) with Functional Specification defaults; startup validation failing clearly when the token, index, model files or `WG21_DATA_DIR` are missing. The token type redacts itself in `Debug` and `Display`.
+- `src/server/auth.rs`: axum middleware comparing `Authorization: Bearer <token>` in constant time with `subtle`, returning 401 otherwise, never logging or echoing the token.
+- `src/server/mod.rs`: `PaperServer` with `#[tool_router(server_handler)]` (tools only, no resources or prompts), `build_app(config) -> axum::Router` mounting rmcp `StreamableHttpService` behind the middleware; `serve` subcommand in `src/main.rs`.
+- Tests: unit tests for missing, malformed, wrong-scheme and wrong tokens giving 401 and a correct token passing; config validation errors; a captured-log test (`tracing` test subscriber) asserting the token never appears in logs, including on auth failure and startup errors.
+
+</step-10>
+
+<step-11>
+
+### Step 11: Read tools
+
+- Component: mcp-server
+- `src/lines.rs`: `slice_lines(md, start: Option<i64>, end: Option<i64>) -> Result<LineSlice>` with 1-based Python slice semantics (`start` inclusive, `end` exclusive, negatives from the end, clamping, `start=0` and both-missing rejected), returning text and `total_lines`.
+- `src/server/tools.rs`: tool methods and `schemars` parameter types for `get_paper` (full Markdown, uncapped), `get_paper_lines`, `get_paper_metadata` (full `PaperRow`), `list_revisions` (date, mailing, `previous_version`, newest first), `get_paper_outline` (via `chunk::outline`, end exclusive) and `diff_revisions` (unified diff via `similar`, uncapped, error when the two ids are different paper numbers). All read paperstore directly, resolve unversioned ids with `selection::resolve_latest`, and map unknown papers, invalid ranges and revision mismatches to MCP tool errors.
+- Tests: `slice_lines` against a Python-slice oracle over every combination of positive, negative and missing bounds in a range around the line count (oracle computed in Rust from 0-based slice rules); integration tests in `tests/it/` start the server on an ephemeral port against the fixture workspace and call each read tool through an rmcp Streamable HTTP client, including the error cases.
+
+</step-11>
+
+<step-12>
+
+### Step 12: Search tools and end-to-end server behavior
+
+- Component: mcp-server
+- `src/server/tools.rs`: `search_papers` (query, required `mode`, filters, `all_revisions`, `top_k`, `cursor`) and `search_metadata` (keywords on title and authors, same filters and `cursor`), each running the search on the first call, storing the full ranked list in a shared `CursorCache` and returning the first page plus `next_cursor`; an expired or unknown cursor returns a tool error. The server opens the index read-only through `LanceStore` with `read_consistency_interval`, so it picks up new index runs without a restart.
+- Tests: integration tests over rmcp HTTP: all eight tools succeed with a valid token and every request without one gets 401; every `search_papers` hit's `start`/`end` passed to `get_paper_lines` returns that hit's text; paging each mode to its end yields the step 9 counts; an index run between pages leaves later pages of an existing cursor unchanged; running `index_papers` while the server serves keeps it answering and new data becomes visible afterwards.
+
+</step-12>
+
+<step-13>
+
+### Step 13: Golden query set and evaluation harness
+
+- Component: retrieval-evaluation
+- Placement: after the server, because it measures the complete search stack and server latency. It is a standalone tool for choosing and guarding configurations.
+- Pieces: golden set and harness (step 13), then model selection (step 14). Sequential, because selection runs the harness.
+- `crates/paper-mcp/eval/golden.jsonl`: at least 50 hand-labeled queries, each with relevant paper revisions and line ranges, covering prose questions, exact C++ identifiers, wording-diff phrases and revision-specific questions, labeled against the real corpus in `data/`.
+- `crates/paper-mcp/src/bin/paper-mcp-eval.rs` and `src/eval.rs`: loads the golden set, runs dense-only, BM25-only, hybrid and hybrid plus rerank through `search::search_chunks` against a built index, and reports recall@20 per configuration, indexing throughput (from the index report) and p95 `search_papers` latency. Library code returns data; the binary prints the report.
+- `crates/paper-mcp/README.md`: model provisioning into the model directory out of band, index and serve usage, eval usage.
+- Tests: unit tests for golden-set parsing and validation (at least 50 queries, every category present, ranges well-formed) and for recall@k computation, including hits that overlap a labeled line range.
+
+</step-13>
+
+<step-14>
+
+### Step 14: Model and tokenizer selection on the full corpus
+
+- Component: retrieval-evaluation
+- Provision candidate open-weight embedding and cross-encoder models into the model directory out of band (development only), index the full corpus for each candidate configuration, and sweep chunk budget and FTS tokenizer settings with `paper-mcp-eval`.
+- Record candidates, recall@20 for all four configurations, throughput and p95 latency in `crates/paper-mcp/eval/RESULTS.md`. Pin the chosen embedder, reranker, chunk budget and tokenizer settings as named constants in `src/model.rs`, `src/chunk.rs` and `src/store/lance.rs`, which updates `IndexFormatVersion`. Add the chosen models to this plan's decision record.
+- Exit check: the chosen configuration's recall@20 beats dense-only and BM25-only, and a full-corpus index completes and serves.
+- Tests: a regression test running the harness on a small fixture subset with `HashEmbedder` to guard the harness, plus an `#[ignore]` test asserting the recorded recall criterion when `PAPER_MCP_MODEL_DIR` and the full index are present.
+
+</step-14>
+
+<step-15>
+
+### Step 15: CI for paper-mcp and paperstore crates
+
+- Component: ci
+- Placement: last, because it builds and tests every crate the earlier components add or change.
+- Pieces: one piece.
+- `.github/workflows/tests.yml`: a cargo job that builds `paper-mcp`, `paperstore` and `paperstore-sqlite` with `--locked` and runs `cargo test -p paperstore -p paperstore-sqlite -p paper-mcp --features paper-mcp/test-models --locked`, with the toolchain from `rust-toolchain.toml` and cargo caching. Model-dependent and full-corpus tests stay `#[ignore]` and need no model files or network.
+- Tests: the workflow passes locally via the same commands; validate the YAML with a local parse. Do not push.
+
+</step-15>
 
 </execution-plan>
