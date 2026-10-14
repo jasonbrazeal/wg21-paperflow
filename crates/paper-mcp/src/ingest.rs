@@ -13,11 +13,13 @@ use crate::dates::{Date, parse_date, parse_month};
 use crate::embed::{Embedder, MODEL_NAME};
 use crate::paper_id::PaperId;
 use crate::qdrant::{ChunkPayload, Citation, MetadataPayload, Store, StoreError, chunk_point_id};
-use crate::text::{ChunkSettings, Document, PaperLabel, chunk_document};
+use crate::text::{
+    ChunkSettings, Document, PaperLabel, SPECIAL_TOKENS, TokenCounter, chunk_document,
+};
 
 /// Bump when the splitter, block, or chunk rules change, so every paper is
 /// chunked again.
-const CHUNKER_CODE_VERSION: &str = "1";
+const CHUNKER_CODE_VERSION: &str = "2";
 
 /// Bump when the context header format changes.
 const HEADER_FORMAT_VERSION: &str = "1";
@@ -89,7 +91,7 @@ pub fn parse_targets(args: &[String]) -> Result<Targets, TargetError> {
 pub fn chunker_version(settings: ChunkSettings) -> String {
     let input = format!(
         "code={CHUNKER_CODE_VERSION};target={};overlap={};max={};header={HEADER_FORMAT_VERSION};model={MODEL_NAME}",
-        settings.target_tokens, settings.overlap_max_tokens, settings.max_input_tokens
+        settings.target_tokens, settings.overlap_max_tokens, settings.max_tokens
     );
     let digest = Sha256::digest(input.as_bytes());
     let mut hex = String::with_capacity(16);
@@ -283,6 +285,13 @@ enum PaperError {
     Citations(rusqlite::Error),
     #[error("cannot build chunk point {0}")]
     Point(usize),
+    #[error("chunk at lines {first}-{last} has {tokens} tokens, over the model limit of {limit}")]
+    ChunkTooLong {
+        first: usize,
+        last: usize,
+        tokens: usize,
+        limit: usize,
+    },
     #[error(transparent)]
     Embed(#[from] crate::embed::EmbedError),
     #[error(transparent)]
@@ -437,20 +446,25 @@ impl<'a> Ingest<'a> {
             title: &record.title,
         };
         let chunks = chunk_document(doc, sections, self.config.chunk_settings(), &counter, label);
-        for chunk in chunks.iter().filter(|c| c.oversized) {
-            warn!(
-                paper = id.as_str(),
-                first = chunk.first.get(),
-                last = chunk.last.get(),
-                "chunk exceeds the model input limit; its embedding covers only the start"
-            );
-        }
+        let limit = self.config.model.max_length;
         let mut points = Vec::with_capacity(chunks.len());
         for batch in chunks.chunks(self.config.ingest.embed_batch) {
-            let texts = batch
-                .iter()
-                .map(|c| c.embed_text(doc, id.as_str(), &record.title))
-                .collect();
+            let mut texts = Vec::with_capacity(batch.len());
+            for chunk in batch {
+                let text = chunk.embed_text(doc);
+                // The chunker keeps chunks far below this; a longer one
+                // would be truncated by the model, so it is a chunker bug.
+                let tokens = counter.count(&text) + SPECIAL_TOKENS;
+                if tokens > limit {
+                    return Err(PaperError::ChunkTooLong {
+                        first: chunk.first.get(),
+                        last: chunk.last.get(),
+                        tokens,
+                        limit,
+                    });
+                }
+                texts.push(text);
+            }
             let vectors = self.embedder.embed(texts).await?;
             for (chunk, dense) in batch.iter().zip(vectors) {
                 let payload = ChunkPayload {
@@ -518,7 +532,7 @@ mod tests {
         let base = ChunkSettings {
             target_tokens: 400,
             overlap_max_tokens: 200,
-            max_input_tokens: 8192,
+            max_tokens: 1024,
         };
         let other = ChunkSettings {
             target_tokens: 300,

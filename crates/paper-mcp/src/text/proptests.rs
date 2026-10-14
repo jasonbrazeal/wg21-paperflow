@@ -3,7 +3,10 @@
 use proptest::prelude::*;
 
 use super::chunks::tests::Words;
-use super::{ChunkSettings, Document, PaperLabel, chunk_document, outline};
+use super::{
+    Chunk, ChunkSettings, Document, MIN_MAX_TOKENS, PaperLabel, SPECIAL_TOKENS, TokenCounter,
+    chunk_document, outline,
+};
 
 fn line() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -21,6 +24,13 @@ fn line() -> impl Strategy<Value = String> {
         "[a-z ]{1,20}".prop_map(|s| format!("- {s}")),
         "[a-z ]{1,20}".prop_map(|s| format!("  * {s}")),
         Just("a \r b".to_owned()),
+        Just("<table border=\"1\">".to_owned()),
+        Just("<tr>".to_owned()),
+        "[a-z ]{1,30}".prop_map(|s| format!("<td>w {s}</td>")),
+        Just("</tr>".to_owned()),
+        Just("</table>".to_owned()),
+        "[a-z .]{200,1500}".prop_map(|s| format!("w {s}")),
+        "[a-z]{1,8}".prop_map(|s| format!("{s}é{s}— {s}")),
     ]
 }
 
@@ -35,11 +45,25 @@ fn markdown() -> impl Strategy<Value = String> {
 }
 
 fn settings() -> impl Strategy<Value = ChunkSettings> {
-    (1usize..60, 0usize..30, 40usize..200).prop_map(|(target, overlap, max)| ChunkSettings {
-        target_tokens: target,
-        overlap_max_tokens: overlap,
-        max_input_tokens: max,
-    })
+    (MIN_MAX_TOKENS..400)
+        .prop_flat_map(|max| (1..=max / 2, Just(max)))
+        .prop_flat_map(|(target, max)| (Just(target), 0..target, Just(max)))
+        .prop_map(|(target, overlap, max)| ChunkSettings {
+            target_tokens: target,
+            overlap_max_tokens: overlap,
+            max_tokens: max,
+        })
+}
+
+/// The byte offsets in the paper text of a chunk's start and end.
+fn span(doc: &Document<'_>, chunk: &Chunk) -> (usize, usize) {
+    let offset = |line: usize| -> usize { doc.lines()[..line].iter().map(|l| l.len() + 1).sum() };
+    let last = chunk.last.zero_based();
+    let end = chunk.end_byte.unwrap_or(doc.lines()[last].len());
+    (
+        offset(chunk.first.zero_based()) + chunk.start_byte,
+        offset(last) + end,
+    )
 }
 
 const LABEL: PaperLabel<'static> = PaperLabel {
@@ -72,23 +96,40 @@ proptest! {
     #[test]
     fn chunks_cover_each_section_and_stay_inside_it(md in markdown(), s in settings()) {
         let doc = Document::parse(&md);
+        let text = doc.lines().join("\n");
         let sections = doc.sections();
         let chunks = chunk_document(&doc, &sections, s, &Words, LABEL);
         for section in &sections {
             let mine: Vec<_> = chunks.iter().filter(|c| c.section == section.index).collect();
             prop_assert!(!mine.is_empty());
             prop_assert_eq!(mine[0].first, section.first);
-            prop_assert_eq!(mine.last().map(|c| c.last), Some(section.last));
+            prop_assert_eq!(mine[0].start_byte, 0);
+            prop_assert_eq!(mine.last().map(|c| (c.last, c.end_byte)), Some((section.last, None)));
             for (position, chunk) in mine.iter().enumerate() {
                 prop_assert_eq!(chunk.number.get(), position + 1);
                 prop_assert!(section.first <= chunk.first && chunk.last <= section.last);
-                prop_assert!(chunk.first <= chunk.last);
-                prop_assert_eq!(chunk.text(&doc), doc.lines()[chunk.first.zero_based()..chunk.last.get()].join("\n"));
+                let (start, end) = span(&doc, chunk);
+                prop_assert!(start < end || (start == end && chunk.first == chunk.last));
+                prop_assert_eq!(chunk.text(&doc), &text[start..end]);
             }
             for pair in mine.windows(2) {
-                prop_assert!(pair[1].first.get() <= pair[0].last.get() + 1);
-                prop_assert!(pair[1].last > pair[0].last);
+                let (_, previous_end) = span(&doc, pair[0]);
+                let (start, end) = span(&doc, pair[1]);
+                // A chunk starting a line may follow the previous line's
+                // newline; one starting inside a line must leave no gap.
+                let gap = usize::from(pair[1].start_byte == 0);
+                prop_assert!(start <= previous_end + gap);
+                prop_assert!(end > previous_end);
             }
+        }
+    }
+
+    #[test]
+    fn every_chunk_fits_the_size_limit(md in markdown(), s in settings()) {
+        let doc = Document::parse(&md);
+        for chunk in chunk_document(&doc, &doc.sections(), s, &Words, LABEL) {
+            let tokens = Words.count(&chunk.embed_text(&doc)) + SPECIAL_TOKENS;
+            prop_assert!(tokens <= s.max_tokens, "{} > {}: {:?}", tokens, s.max_tokens, chunk);
         }
     }
 
