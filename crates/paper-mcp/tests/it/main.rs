@@ -10,3 +10,4 @@ mod ingest;
 mod search;
 mod server;
 mod store;
+mod tools;

@@ -7,6 +7,7 @@
 
 use std::io::Write;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
@@ -18,6 +19,7 @@ use paper_mcp::server::config::{TOKEN_ENV, default_allowed_hosts};
 use paper_mcp::{
     BearerToken, CursorConfig, MCP_PATH, PaperServer, ServeConfig, ServeOptions, build_app,
 };
+use paperstore::{PaperNum, PaperRow, StorageBackend};
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
@@ -29,6 +31,35 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const SECRET: &str = "s3cret-Token_value";
 
 const INIT_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+
+/// A paperstore with no papers, for tests that call no tools.
+struct NoPapers;
+
+impl StorageBackend for NoPapers {
+    fn meta(&self, num: &PaperNum) -> paperstore::Result<PaperRow> {
+        Err(paperstore::Error::missing_paper(num.clone()))
+    }
+
+    fn paper_md(&self, num: &PaperNum) -> paperstore::Result<String> {
+        Err(paperstore::Error::missing_markdown(num.clone()))
+    }
+
+    fn list_all_paper_ids(&self) -> paperstore::Result<Vec<PaperNum>> {
+        Ok(Vec::new())
+    }
+
+    fn list_paper_ids_for_year(&self, _year: u16) -> paperstore::Result<Vec<PaperNum>> {
+        Ok(Vec::new())
+    }
+
+    fn list_revisions(&self, _num: &PaperNum) -> paperstore::Result<Vec<PaperRow>> {
+        Ok(Vec::new())
+    }
+
+    fn tool_dir(&self, tool: &str) -> PathBuf {
+        PathBuf::from(tool)
+    }
+}
 
 fn config(bind: SocketAddr) -> Result<ServeConfig, paper_mcp::Error> {
     let defaults = ServeOptions::default();
@@ -48,7 +79,7 @@ fn config(bind: SocketAddr) -> Result<ServeConfig, paper_mcp::Error> {
 fn app() -> Result<Router, paper_mcp::Error> {
     Ok(build_app(
         &config(ServeOptions::default().bind)?,
-        PaperServer::new(),
+        PaperServer::new(NoPapers),
         CancellationToken::new(),
     ))
 }
@@ -150,7 +181,12 @@ async fn token_never_appears_in_logs() -> TestResult {
     // Startup failure after the configuration is logged: the port is taken.
     let taken = TcpListener::bind("127.0.0.1:0").await?;
     let config = config(taken.local_addr()?)?;
-    let result = paper_mcp::serve(&config, PaperServer::new(), CancellationToken::new()).await;
+    let result = paper_mcp::serve(
+        &config,
+        PaperServer::new(NoPapers),
+        CancellationToken::new(),
+    )
+    .await;
     let error = result.err().ok_or("binding a taken port should fail")?;
     tracing::error!(%error, ?error, "startup failed");
 

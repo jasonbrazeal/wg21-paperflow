@@ -141,7 +141,8 @@ fn serve(options: ServeOptions) -> Result<ExitCode> {
     runtime.block_on(async {
         let shutdown = CancellationToken::new();
         tokio::spawn(paper_mcp::server::ctrl_c(shutdown.clone()));
-        paper_mcp::serve(&config, PaperServer::new(), shutdown).await
+        let server = PaperServer::new(SqliteBackend::new(&config.workspace)?);
+        paper_mcp::serve(&config, server, shutdown).await
     })?;
     Ok(ExitCode::SUCCESS)
 }

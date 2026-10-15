@@ -40,6 +40,7 @@ schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+similar = "2.7.0"
 subtle = "2.6.1"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["net", "rt-multi-thread", "signal"] }
@@ -52,7 +53,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 http-body-util = "0.1.5"
 # Integration tests build against the library with the test-double models.
 paper-mcp = { path = ".", features = ["test-models"] }
-rmcp = { version = "3.5.1", features = ["client", "transport-streamable-http-client"] }
+rmcp = { version = "3.5.1", features = ["client", "transport-streamable-http-client-reqwest"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 temp-env = "0.3.6"
 tempfile = "3.27.0"

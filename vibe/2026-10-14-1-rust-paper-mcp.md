@@ -337,7 +337,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-11>
 
-### Step 11: Read tools
+### Step 11: Read tools [completed]
 
 - Component: mcp-server
 - `src/lines.rs`: `slice_lines(md, start: Option<i64>, end: Option<i64>) -> Result<LineSlice>` with 1-based Python slice semantics (`start` inclusive, `end` exclusive, negatives from the end, clamping, `start=0` and both-missing rejected), returning text and `total_lines`.

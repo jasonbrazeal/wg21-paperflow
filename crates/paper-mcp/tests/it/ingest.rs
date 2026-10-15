@@ -61,11 +61,15 @@ impl Workspace {
         Ok(Self { dir, backend })
     }
 
+    pub(crate) fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
     fn tool_dir(&self) -> PathBuf {
         self.backend.tool_dir(TOOL_NAME)
     }
 
-    fn markdown(&self, paper: &str) -> PathBuf {
+    pub(crate) fn markdown(&self, paper: &str) -> PathBuf {
         self.dir
             .path()
             .join("paperstore")

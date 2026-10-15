@@ -19,6 +19,7 @@
 //! search side. [`ingest`] ties them together into the `index` run, and
 //! [`search`] runs vector, keyword and hybrid searches with reranking, and
 //! [`cursor`] pages ranked search results through stable server-side cursors.
+//! [`lines`] cuts line ranges out of a paper with Python slice semantics.
 //! [`server`] serves the MCP tools over bearer-authenticated Streamable HTTP.
 
 pub mod chunk;
@@ -27,6 +28,7 @@ pub mod error;
 pub mod filter;
 pub mod format;
 pub mod ingest;
+pub mod lines;
 pub mod model;
 pub mod prefix;
 pub mod search;
@@ -45,6 +47,7 @@ pub use format::{IndexFormatVersion, content_hash};
 pub use ingest::{
     IndexLock, IndexOptions, IndexReport, Outcome, PaperReport, TOOL_NAME, index_papers,
 };
+pub use lines::{LineSlice, slice_lines};
 pub use model::onnx::{OnnxEmbedder, OnnxReranker};
 pub use model::{Embedder, MODEL_DIR_ENV, Reranker, resolve_model_dir};
 pub use prefix::{PREFIX_VERSION, build_prefix, prefixed_text};

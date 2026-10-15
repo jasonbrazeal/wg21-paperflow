@@ -8,13 +8,15 @@
 //! [`build_app`] mounts rmcp's Streamable HTTP service at [`MCP_PATH`]
 //! behind the bearer-token middleware of the `auth` module, which guards
 //! every route. [`PaperServer`] is the MCP handler, exposing tools only,
-//! and [`config`] holds the `serve` settings and their startup validation.
+//! [`tools`] defines those tools, and [`config`] holds the `serve` settings
+//! and their startup validation.
 
-use std::sync::Arc;
+use std::fmt;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use rmcp::tool_router;
+use paperstore::StorageBackend;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use tokio::net::TcpListener;
@@ -24,31 +26,61 @@ use crate::error::Error;
 
 mod auth;
 pub mod config;
+pub mod tools;
 
 pub use config::{BearerToken, ServeConfig, ServeOptions};
 
 /// Path at which the MCP endpoint is served.
 pub const MCP_PATH: &str = "/mcp";
 
+/// The paperstore backend shared by every session's handler.
+type SharedStore = Arc<Mutex<Box<dyn StorageBackend + Send>>>;
+
 /// The MCP handler, exposing the paper tools and nothing else.
-#[derive(Clone, Debug, Default)]
+///
+/// Clones share one paperstore backend, which serves one tool call at a time.
+#[derive(Clone)]
 pub struct PaperServer {
-    _private: (),
+    store: SharedStore,
 }
 
-impl PaperServer {
-    /// Create a server handler.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+impl fmt::Debug for PaperServer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PaperServer").finish_non_exhaustive()
     }
 }
 
-// The read and search tools land in this block; until then the router is
-// legitimately empty. The macro expansion names a bare `Result`, so this
-// module does not import the crate's `Result` alias.
-#[tool_router(server_handler, allow_empty)]
-impl PaperServer {}
+impl PaperServer {
+    /// Create a handler whose tools read `store`.
+    #[must_use]
+    pub fn new(store: impl StorageBackend + Send + 'static) -> Self {
+        Self {
+            store: Arc::new(Mutex::new(Box::new(store))),
+        }
+    }
+
+    /// Run `op` against the store on a blocking thread, turning its error
+    /// into the message of an MCP tool error.
+    async fn read<T, F>(&self, op: F) -> std::result::Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(&dyn StorageBackend) -> crate::error::Result<T> + Send + 'static,
+    {
+        let store = Arc::clone(&self.store);
+        let joined = tokio::task::spawn_blocking(move || {
+            let guard = store.lock().unwrap_or_else(PoisonError::into_inner);
+            op(guard.as_ref())
+        })
+        .await;
+        match joined {
+            Ok(result) => result.map_err(|e| e.to_string()),
+            Err(e) => {
+                tracing::error!(error = %e, "tool task failed");
+                Err("internal error: the tool task failed".to_owned())
+            }
+        }
+    }
+}
 
 /// Build the HTTP app: the MCP endpoint at [`MCP_PATH`], with every route
 /// behind the bearer-token check.

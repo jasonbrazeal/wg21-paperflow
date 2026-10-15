@@ -129,6 +129,19 @@ pub enum Error {
     #[error("server failed: {0}")]
     Serve(std::io::Error),
 
+    /// A requested line range is malformed.
+    #[error("invalid line range: {0}")]
+    InvalidLineRange(&'static str),
+
+    /// Two paper ids that must name revisions of one paper do not.
+    #[error("{from} and {to} are not revisions of the same paper")]
+    RevisionMismatch {
+        /// The first paper id.
+        from: paperstore::PaperNum,
+        /// The second paper id.
+        to: paperstore::PaperNum,
+    },
+
     /// A paperstore operation failed.
     #[error(transparent)]
     Store(#[from] paperstore::Error),
