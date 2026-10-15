@@ -9,6 +9,12 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::schema;
 
+const SELECT_PAPER_COLUMNS: &str = "SELECT paper_id, year, title, authors, target_group, intent, url, \
+     document_date, mailing_date, disposition, previous_version, \
+     source_file, markdown_path, dissect_path, agora_path, assay_path, \
+     citations_extracted_at, line_count, status, error \
+     FROM papers";
+
 /// SQLite-backed [`StorageBackend`] over `<workspace_dir>/paperstore.db`.
 #[derive(Debug)]
 pub struct SqliteBackend {
@@ -53,13 +59,7 @@ impl StorageBackend for SqliteBackend {
     fn meta(&self, num: &PaperNum) -> Result<PaperRow> {
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT paper_id, year, title, authors, target_group, intent, url, \
-                 document_date, mailing_date, disposition, previous_version, \
-                 source_file, markdown_path, dissect_path, agora_path, assay_path, \
-                 citations_extracted_at, line_count, status, error \
-                 FROM papers WHERE paper_id = ?",
-            )
+            .prepare(&format!("{SELECT_PAPER_COLUMNS} WHERE paper_id = ?"))
             .map_err(backend_err)?;
         stmt.query_row([num.as_str()], row_to_paper)
             .optional()
@@ -95,6 +95,22 @@ impl StorageBackend for SqliteBackend {
             return Err(Error::missing_markdown(num.clone()));
         }
         Ok(std::fs::read_to_string(&path)?)
+    }
+
+    /// Returns every metadata row, ordered by `paper_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Backend`] when the query fails.
+    fn list_papers(&self) -> Result<Vec<PaperRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("{SELECT_PAPER_COLUMNS} ORDER BY paper_id"))
+            .map_err(backend_err)?;
+        stmt.query_map([], row_to_paper)
+            .map_err(backend_err)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(backend_err)
     }
 }
 

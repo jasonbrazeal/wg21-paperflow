@@ -49,10 +49,11 @@ pub(crate) fn ensure_schema(conn: &Connection) -> rusqlite::Result<()> {
     if !columns.iter().any(|column| column == "assay_path") {
         conn.execute_batch("ALTER TABLE papers ADD COLUMN assay_path TEXT DEFAULT ''")?;
     }
-    if !columns.iter().any(|column| column == "citations_extracted_at") {
-        conn.execute_batch(
-            "ALTER TABLE papers ADD COLUMN citations_extracted_at TEXT DEFAULT ''",
-        )?;
+    if !columns
+        .iter()
+        .any(|column| column == "citations_extracted_at")
+    {
+        conn.execute_batch("ALTER TABLE papers ADD COLUMN citations_extracted_at TEXT DEFAULT ''")?;
     }
     Ok(())
 }

@@ -292,6 +292,80 @@ fn existing_table_without_citations_extracted_at_is_migrated() {
     assert_eq!(row.citations_extracted_at, "");
 }
 
+fn listed_ids(backend: &SqliteBackend) -> Vec<String> {
+    backend
+        .list_papers()
+        .unwrap_or_else(|e| panic!("list_papers: {e}"))
+        .into_iter()
+        .map(|row| row.paper_num)
+        .collect()
+}
+
+#[test]
+fn list_papers_empty_store_gives_empty_list() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+
+    assert!(listed_ids(&backend).is_empty());
+}
+
+#[test]
+fn list_papers_mixed_store_returns_every_row_sorted_by_paper_id() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    for id in ["SD-5", "P4003R2", "N5001", "SD-1", "P2583R3", "N4950"] {
+        ws.insert_row(id, "");
+    }
+
+    assert_eq!(
+        listed_ids(&backend),
+        ["N4950", "N5001", "P2583R3", "P4003R2", "SD-1", "SD-5"]
+    );
+}
+
+#[test]
+fn list_papers_maps_all_fields_like_meta() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.raw_connection()
+        .execute(FULL_INSERT, [])
+        .unwrap_or_else(|e| panic!("insert full row: {e}"));
+
+    let rows = backend
+        .list_papers()
+        .unwrap_or_else(|e| panic!("list_papers: {e}"));
+    let meta = backend
+        .meta(&paper_num())
+        .unwrap_or_else(|e| panic!("meta: {e}"));
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(format!("{:?}", rows[0]), format!("{meta:?}"));
+}
+
+#[test]
+fn list_papers_includes_failed_and_unconverted_rows() {
+    let ws = Workspace::new();
+    let backend = ws.open_backend();
+    ws.insert_row("P4003R2", "");
+    ws.raw_connection()
+        .execute(
+            "INSERT INTO papers (paper_id, status, error) VALUES ('P2583R3', -2, 'boom')",
+            [],
+        )
+        .unwrap_or_else(|e| panic!("insert failed row: {e}"));
+
+    let rows = backend
+        .list_papers()
+        .unwrap_or_else(|e| panic!("list_papers: {e}"));
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].paper_num, "P2583R3");
+    assert_eq!(rows[0].status, -2);
+    assert_eq!(rows[0].error, "boom");
+    assert_eq!(rows[1].paper_num, "P4003R2");
+    assert_eq!(rows[1].markdown_path, "");
+}
+
 #[test]
 fn sqlite_backend_is_send_and_static() {
     // `rusqlite::Connection` is `Send` but not `Sync`; pin the auto traits

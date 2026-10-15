@@ -233,7 +233,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-2>
 
-### Step 2: List all paper rows
+### Step 2: List all paper rows [completed]
 
 - Component: paperstore-listing
 - Add a `StorageBackend` method in `crates/paperstore/src/backend.rs` (for example `fn list_papers(&self) -> Result<Vec<PaperRow>>`) returning every `PaperRow` in a stable order (by paper_id), and implement it in `crates/paperstore-sqlite/src/backend.rs`. Ensure `PaperRow` (`crates/paperstore/src/row.rs`) exposes every column the indexer needs: paper_id, year, title, authors, target_group, intent, url, document_date, mailing_date, disposition, previous_version, markdown_path, line_count, status. The change is additive and read-only.

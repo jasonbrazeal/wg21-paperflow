@@ -24,4 +24,14 @@ pub trait StorageBackend {
     /// Returns [`crate::Error::MissingMarkdown`] when the paper has no
     /// converted markdown.
     fn paper_md(&self, num: &PaperNum) -> Result<String>;
+
+    /// Returns every metadata row, ordered by paper number.
+    ///
+    /// Rows are returned regardless of status or whether markdown has been
+    /// converted; an empty store yields an empty list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Backend`] when the store cannot be read.
+    fn list_papers(&self) -> Result<Vec<PaperRow>>;
 }
