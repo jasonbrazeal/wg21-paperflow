@@ -257,7 +257,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-4>
 
-### Step 4: Build the fixture corpus
+### Step 4: Build the fixture corpus [completed]
 
 - Component: paper-mcp-index
 - Add `crates/paper-mcp/tests/fixtures/paperstore.db` and `crates/paper-mcp/tests/fixtures/paperstore/<pid>.md` using the schema Python paperstore creates (`packages/paperstore/src/paperstore/sqlite_backend.py`). Contents: at least three revisions of one P paper (with `previous_version` lineage), one N paper, one SD paper, one PDF-derived paper, and one metadata-only paper with `status < 0`. Markdown files are short tomd output with fixed-order front matter and include headings, a fenced code block, a table, a wording section, and a revision history section. Add `crates/paper-mcp/tests/fixtures/README.md` describing the contents and how the DB was produced.
