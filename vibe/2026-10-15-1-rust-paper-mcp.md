@@ -244,7 +244,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-3>
 
-### Step 3: Scaffold paper-mcp with the Embedder trait
+### Step 3: Scaffold paper-mcp with the Embedder trait [completed]
 
 - Component: paper-mcp-index
 - Create `crates/paper-mcp/` (`Cargo.toml` inheriting `[workspace.package]` and `[lints] workspace = true`, pinning `lancedb = "=0.40.0"`, `fastembed = "=7.1.1"` with `ort` pinned exactly at `2.0.0-rc.14`, `rmcp = "=3.5.1"` with `transport-streamable-http-server`, axum, tokio, clap, thiserror, anyhow, sha2, `tempfile` and `temp-env` as dev dependencies; `Cargo.lock` updated).

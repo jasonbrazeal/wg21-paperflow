@@ -1,0 +1,34 @@
+[package]
+name = "paper-mcp"
+description = "Search and read the WG21 paper corpus over MCP"
+version.workspace = true
+edition.workspace = true
+# lancedb 0.40.0 requires Rust 1.91, above the workspace minimum.
+rust-version = "1.91"
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.104"
+axum = "0.8.9"
+clap = { version = "4.6.6", features = ["derive"] }
+# rustls TLS for the ONNX Runtime binary and model downloads, matching the
+# rest of the workspace instead of linking the system OpenSSL.
+fastembed = { version = "=7.1.1", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+# lancedb 0.40.0 references its `remote`-gated `Error::Http` variant
+# unconditionally in `job.rs` and does not compile without `remote`.
+lancedb = { version = "=0.40.0", features = ["remote"] }
+# Pinned exactly: ort has no stable 2.x, and this must match the exact
+# version fastembed 7.1.1 requires.
+ort = { version = "=2.0.0-rc.13", default-features = false }
+rmcp = { version = "=3.5.1", features = ["server", "transport-streamable-http-server"] }
+sha2 = "0.11.1"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+
+[dev-dependencies]
+temp-env = "0.3.6"
+tempfile = "3.27.0"
