@@ -269,7 +269,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-5>
 
-### Step 5: Chunk tomd Markdown with contextual prefixes
+### Step 5: Chunk tomd Markdown with contextual prefixes [completed]
 
 - Component: paper-mcp-index
 - `src/chunk.rs`: `CHUNKER_VERSION` constant, `TARGET_TOKENS = 512` and `MAX_TOKENS = 1024` constants, `ChunkKind` enum {`body`, `wording`, `code`, `revision_history`, `front_matter`}, `Chunk` struct (section_path, start_line, end_line 0-based end exclusive, chunk_kind, text, indexed_text), and `chunk_markdown(md: &str, meta: &PrefixMeta) -> Vec<Chunk>`. Split on headings into sections, pack paragraphs to the target, never split fenced code or tables unless one alone exceeds the maximum (then split on line boundaries), and assign `chunk_kind` by heading and content rules.
