@@ -6097,6 +6097,7 @@ dependencies = [
  "axum",
  "clap",
  "fastembed",
+ "futures",
  "lancedb",
  "ort",
  "paperstore",
@@ -6108,6 +6109,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

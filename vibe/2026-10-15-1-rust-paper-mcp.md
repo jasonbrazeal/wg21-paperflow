@@ -292,7 +292,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-7>
 
-### Step 7: Incremental LanceDB indexing
+### Step 7: Incremental LanceDB indexing [completed]
 
 - Component: paper-mcp-index
 - `src/index.rs`: `Indexer` over a `StorageBackend` and an `Embedder`, writing `$WG21_DATA_DIR/paperindex/` (path resolved from the paperstore workspace, never written into paperstore) with a `chunks` table (chunk id, paper_id, revisionless_id, revision number, is_latest, has_text, year, mailing_date, target_group, authors, intent, chunk_kind, section_path, start_line, end_line, text, indexed_text, vector) and a `papers` manifest table (paper_id, content hash, chunker version, model id, indexed_at), plus an index-level manifest recording model id, dim, and chunker version.

@@ -20,6 +20,8 @@ use paperstore_sqlite::SqliteBackend;
 use rusqlite::Connection;
 use tempfile::TempDir;
 
+mod index;
+
 /// Every paper in the fixture, in `paper_id` order.
 const FIXTURE_PAPER_IDS: [&str; 7] = [
     "N5001", "P1000R0", "P1000R1", "P1000R2", "P2000R0", "P3000R0", "SD-4",

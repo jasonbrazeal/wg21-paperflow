@@ -18,6 +18,7 @@ clap = { version = "4.6.6", features = ["derive"] }
 # rustls TLS for the ONNX Runtime binary and model downloads, matching the
 # rest of the workspace instead of linking the system OpenSSL.
 fastembed = { version = "=7.1.1", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+futures = "0.3.34"
 # lancedb 0.40.0 references its `remote`-gated `Error::Http` variant
 # unconditionally in `job.rs` and does not compile without `remote`.
 lancedb = { version = "=0.40.0", features = ["remote"] }
@@ -29,6 +30,7 @@ rmcp = { version = "=3.5.1", features = ["server", "transport-streamable-http-se
 sha2 = "0.11.1"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+tracing = "0.1.44"
 
 [dev-dependencies]
 paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
