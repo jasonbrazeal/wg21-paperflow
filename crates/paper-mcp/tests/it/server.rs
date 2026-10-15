@@ -15,9 +15,11 @@ use axum::body::Body;
 use axum::http::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HOST};
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt as _;
+use paper_mcp::model::fake::{HashEmbedder, IdentityReranker};
 use paper_mcp::server::config::{TOKEN_ENV, default_allowed_hosts};
 use paper_mcp::{
-    BearerToken, CursorConfig, MCP_PATH, PaperServer, ServeConfig, ServeOptions, build_app,
+    BearerToken, CursorConfig, Embedder as _, LanceStore, MCP_PATH, PaperServer, SearchIndex,
+    SearchParams, ServeConfig, ServeOptions, build_app,
 };
 use paperstore::{PaperNum, PaperRow, StorageBackend};
 use tempfile::TempDir;
@@ -76,10 +78,21 @@ fn config(bind: SocketAddr) -> Result<ServeConfig, paper_mcp::Error> {
     })
 }
 
-fn app() -> Result<Router, paper_mcp::Error> {
+/// A server with no papers over an empty index in `dir`.
+async fn server(dir: &TempDir) -> Result<PaperServer, paper_mcp::Error> {
+    let index = SearchIndex {
+        store: LanceStore::open(dir.path(), HashEmbedder::default().dim()).await?,
+        embedder: Arc::new(HashEmbedder::default()),
+        reranker: Arc::new(IdentityReranker),
+        params: SearchParams::default(),
+    };
+    Ok(PaperServer::new(NoPapers, index, CursorConfig::default()))
+}
+
+async fn app(dir: &TempDir) -> Result<Router, paper_mcp::Error> {
     Ok(build_app(
         &config(ServeOptions::default().bind)?,
-        PaperServer::new(NoPapers),
+        server(dir).await?,
         CancellationToken::new(),
     ))
 }
@@ -95,7 +108,11 @@ async fn post(
     if let Some(value) = authorization {
         request = request.header(AUTHORIZATION, value);
     }
-    let response = app()?.oneshot(request.body(Body::from(INIT_BODY))?).await?;
+    let dir = TempDir::new()?;
+    let response = app(&dir)
+        .await?
+        .oneshot(request.body(Body::from(INIT_BODY))?)
+        .await?;
     let status = response.status();
     let body = response.into_body().collect().await?.to_bytes();
     Ok((status, String::from_utf8_lossy(&body).into_owned()))
@@ -181,12 +198,8 @@ async fn token_never_appears_in_logs() -> TestResult {
     // Startup failure after the configuration is logged: the port is taken.
     let taken = TcpListener::bind("127.0.0.1:0").await?;
     let config = config(taken.local_addr()?)?;
-    let result = paper_mcp::serve(
-        &config,
-        PaperServer::new(NoPapers),
-        CancellationToken::new(),
-    )
-    .await;
+    let dir = TempDir::new()?;
+    let result = paper_mcp::serve(&config, server(&dir).await?, CancellationToken::new()).await;
     let error = result.err().ok_or("binding a taken port should fail")?;
     tracing::error!(%error, ?error, "startup failed");
 

@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::ingest::TOOL_NAME;
 use crate::model::onnx::check_model_files;
 use crate::model::resolve_model_dir;
-use crate::search::{DEFAULT_RERANK_DEPTH, DEFAULT_TOP_K};
+use crate::search::{DEFAULT_RERANK_DEPTH, DEFAULT_TOP_K, SearchParams};
 use crate::store::lance::LANCEDB_DIR;
 
 /// Environment variable holding the bearer token when `--token-file` is absent.
@@ -216,6 +216,15 @@ impl ServeConfig {
                 capacity: options.cursor_capacity,
             },
         })
+    }
+
+    /// Return the server-wide search limits.
+    #[must_use]
+    pub fn search_params(&self) -> SearchParams {
+        SearchParams {
+            top_k: self.top_k.get(),
+            rerank_depth: self.rerank_depth.get(),
+        }
     }
 }
 

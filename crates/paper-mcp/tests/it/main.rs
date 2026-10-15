@@ -8,6 +8,7 @@
 mod cli;
 mod ingest;
 mod search;
+mod search_tools;
 mod server;
 mod store;
 mod tools;

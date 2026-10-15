@@ -9,7 +9,9 @@
 //! behind the bearer-token middleware of the `auth` module, which guards
 //! every route. [`PaperServer`] is the MCP handler, exposing tools only,
 //! [`tools`] defines those tools, and [`config`] holds the `serve` settings
-//! and their startup validation.
+//! and their startup validation. The search tools query a [`SearchIndex`]
+//! and page their results through one [`CursorCache`] shared by every
+//! session.
 
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,7 +24,11 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
+use crate::cursor::{CursorCache, CursorConfig, CursorError, Page};
 use crate::error::Error;
+use crate::model::{Embedder, Reranker};
+use crate::search::SearchParams;
+use crate::store::lance::LanceStore;
 
 mod auth;
 pub mod config;
@@ -30,18 +36,46 @@ pub mod tools;
 
 pub use config::{BearerToken, ServeConfig, ServeOptions};
 
+use tools::Ranked;
+
 /// Path at which the MCP endpoint is served.
 pub const MCP_PATH: &str = "/mcp";
 
 /// The paperstore backend shared by every session's handler.
 type SharedStore = Arc<Mutex<Box<dyn StorageBackend + Send>>>;
 
+/// The index and models the search tools run on.
+pub struct SearchIndex {
+    /// The index, opened for reading; see [`LanceStore::open_read_only`].
+    pub store: LanceStore,
+    /// The embedder the index was built with, for query vectors.
+    pub embedder: Arc<dyn Embedder>,
+    /// The reranker that reorders the head of each result list.
+    pub reranker: Arc<dyn Reranker>,
+    /// Server-wide search limits.
+    pub params: SearchParams,
+}
+
+impl fmt::Debug for SearchIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SearchIndex")
+            .field("store", &self.store)
+            .field("embedder", &self.embedder.id())
+            .field("reranker", &self.reranker.id())
+            .field("params", &self.params)
+            .finish()
+    }
+}
+
 /// The MCP handler, exposing the paper tools and nothing else.
 ///
-/// Clones share one paperstore backend, which serves one tool call at a time.
+/// Clones share one paperstore backend, which serves one read tool call at
+/// a time, one search index, and one cursor cache.
 #[derive(Clone)]
 pub struct PaperServer {
     store: SharedStore,
+    index: Arc<SearchIndex>,
+    cursors: Arc<Mutex<CursorCache<Ranked>>>,
 }
 
 impl fmt::Debug for PaperServer {
@@ -51,12 +85,35 @@ impl fmt::Debug for PaperServer {
 }
 
 impl PaperServer {
-    /// Create a handler whose tools read `store`.
+    /// Create a handler whose read tools read `store` and whose search tools
+    /// query `index`, paging results with the `cursor` limits.
     #[must_use]
-    pub fn new(store: impl StorageBackend + Send + 'static) -> Self {
+    pub fn new(
+        store: impl StorageBackend + Send + 'static,
+        index: SearchIndex,
+        cursor: CursorConfig,
+    ) -> Self {
         Self {
             store: Arc::new(Mutex::new(Box::new(store))),
+            index: Arc::new(index),
+            cursors: Arc::new(Mutex::new(CursorCache::new(cursor))),
         }
+    }
+
+    /// Store a full ranked list and return its first page.
+    fn first_page(&self, results: Vec<Ranked>) -> Page<Ranked> {
+        self.cursors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .start(results)
+    }
+
+    /// Return the page `cursor` points at.
+    fn next_page(&self, cursor: &str) -> std::result::Result<Page<Ranked>, CursorError> {
+        self.cursors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .next(cursor)
     }
 
     /// Run `op` against the store on a blocking thread, turning its error

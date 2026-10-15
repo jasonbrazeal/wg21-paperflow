@@ -182,19 +182,8 @@ impl LanceStore {
             return Err(Error::Index("vector dimension must be positive".to_owned()));
         }
         let path = tool_dir.join(LANCEDB_DIR);
-        let uri = path
-            .to_str()
-            .ok_or_else(|| Error::Index(format!("index path {} is not UTF-8", path.display())))?;
-        let db = connect(uri)
-            .read_consistency_interval(options.read_consistency_interval)
-            .execute()
-            .await
-            .map_err(index_err("open database"))?;
-        let names = db
-            .table_names()
-            .execute()
-            .await
-            .map_err(index_err("list tables"))?;
+        let db = connect_db(&path, &options).await?;
+        let names = table_names(&db).await?;
         let chunks = open_or_create(
             &db,
             &names,
@@ -211,6 +200,52 @@ impl LanceStore {
             &[COL_FTS_TITLE, COL_FTS_AUTHORS],
         )
         .await?;
+        Self::from_tables(chunks, meta, dim, options).await
+    }
+
+    /// Open the existing store in `tool_dir/lancedb` for reading.
+    ///
+    /// Unlike [`LanceStore::open_with`], nothing is created: a missing
+    /// database or table is an error. The handle can still write, so a
+    /// reader must not call the writing methods of [`IndexStore`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoIndex`] when the database or one of its tables is
+    /// missing, and [`Error::Index`] when `dim` is zero, the path is not
+    /// UTF-8, the database cannot be opened, or the stored chunk vectors
+    /// have another length.
+    pub async fn open_read_only(
+        tool_dir: &Path,
+        dim: usize,
+        options: LanceStoreOptions,
+    ) -> Result<Self> {
+        if dim == 0 {
+            return Err(Error::Index("vector dimension must be positive".to_owned()));
+        }
+        let path = tool_dir.join(LANCEDB_DIR);
+        if !path.is_dir() {
+            return Err(Error::NoIndex(path));
+        }
+        let db = connect_db(&path, &options).await?;
+        let names = table_names(&db).await?;
+        if ![CHUNKS_TABLE, META_TABLE]
+            .iter()
+            .all(|table| names.iter().any(|n| n == table))
+        {
+            return Err(Error::NoIndex(path));
+        }
+        let chunks = open_table(&db, CHUNKS_TABLE).await?;
+        let meta = open_table(&db, META_TABLE).await?;
+        Self::from_tables(chunks, meta, dim, options).await
+    }
+
+    async fn from_tables(
+        chunks: Table,
+        meta: Table,
+        dim: usize,
+        options: LanceStoreOptions,
+    ) -> Result<Self> {
         let stored = vector_dim(&chunks).await?;
         if stored != dim {
             return Err(Error::Index(format!(
@@ -532,6 +567,31 @@ fn fts_params() -> FtsIndexBuilder {
         .max_token_length(None)
 }
 
+async fn connect_db(path: &Path, options: &LanceStoreOptions) -> Result<Connection> {
+    let uri = path
+        .to_str()
+        .ok_or_else(|| Error::Index(format!("index path {} is not UTF-8", path.display())))?;
+    connect(uri)
+        .read_consistency_interval(options.read_consistency_interval)
+        .execute()
+        .await
+        .map_err(index_err("open database"))
+}
+
+async fn table_names(db: &Connection) -> Result<Vec<String>> {
+    db.table_names()
+        .execute()
+        .await
+        .map_err(index_err("list tables"))
+}
+
+async fn open_table(db: &Connection, name: &str) -> Result<Table> {
+    db.open_table(name)
+        .execute()
+        .await
+        .map_err(index_err("open table"))
+}
+
 async fn open_or_create(
     db: &Connection,
     names: &[String],
@@ -540,11 +600,7 @@ async fn open_or_create(
     fts_columns: &[&str],
 ) -> Result<Table> {
     if names.iter().any(|n| n == name) {
-        return db
-            .open_table(name)
-            .execute()
-            .await
-            .map_err(index_err("open table"));
+        return open_table(db, name).await;
     }
     let table = db
         .create_empty_table(name, schema)

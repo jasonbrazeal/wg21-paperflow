@@ -7,11 +7,14 @@
 //! server on an ephemeral port over the fixture workspace.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
+use paper_mcp::model::fake::{HashEmbedder, IdentityReranker};
 use paper_mcp::server::config::default_allowed_hosts;
 use paper_mcp::{
-    BearerToken, CursorConfig, MCP_PATH, PaperServer, ServeConfig, ServeOptions, build_app,
-    outline, slice_lines,
+    BearerToken, CursorConfig, MCP_PATH, PaperServer, SearchIndex, SearchParams, ServeConfig,
+    ServeOptions, build_app, outline, slice_lines,
 };
 use paperstore_sqlite::SqliteBackend;
 use rmcp::ServiceExt as _;
@@ -23,35 +26,63 @@ use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use crate::ingest::Workspace;
+use crate::ingest::{Workspace, nums, options, run};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const SECRET: &str = "read-tools-token";
+pub(crate) const SECRET: &str = "read-tools-token";
 
-const READ_TOOLS: [&str; 6] = [
+/// How stale the served index may be. Short, but not zero, so that the
+/// server takes the same periodic freshness check as the production
+/// default instead of checking on every read.
+const SERVE_READ_CONSISTENCY_INTERVAL: Duration = Duration::from_millis(50);
+
+const TOOLS: [&str; 8] = [
     "diff_revisions",
     "get_paper",
     "get_paper_lines",
     "get_paper_metadata",
     "get_paper_outline",
     "list_revisions",
+    "search_metadata",
+    "search_papers",
 ];
 
 /// A running server over a fixture workspace, and a connected client.
-struct Harness {
-    ws: Workspace,
+pub(crate) struct Harness {
+    pub(crate) ws: Workspace,
+    pub(crate) addr: SocketAddr,
     client: RunningService<RoleClient, ClientConfig>,
     shutdown: CancellationToken,
 }
 
 impl Harness {
     async fn start() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with(&[], CursorConfig::default()).await
+    }
+
+    /// Index `papers` with the test-double models, then serve the workspace
+    /// with `cursor` paging limits from an index opened read-only, as
+    /// `serve` opens it.
+    pub(crate) async fn start_with(
+        papers: &[&str],
+        cursor: CursorConfig,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let ws = Workspace::new()?;
+        let writer = ws.store().await?;
+        if !papers.is_empty() {
+            run(&ws.backend, &writer, &nums(papers), &options()).await?;
+        }
+        let index = SearchIndex {
+            store: ws.read_only_store(SERVE_READ_CONSISTENCY_INTERVAL).await?,
+            embedder: Arc::new(HashEmbedder::default()),
+            reranker: Arc::new(IdentityReranker),
+            params: SearchParams::default(),
+        };
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let shutdown = CancellationToken::new();
-        let server = PaperServer::new(SqliteBackend::new(ws.path())?);
+        let server = PaperServer::new(SqliteBackend::new(ws.path())?, index, cursor);
         let app = build_app(&config(addr, &ws)?, server, shutdown.clone());
         tokio::spawn(
             axum::serve(listener, app)
@@ -65,12 +96,13 @@ impl Harness {
         let client = ClientConfig::default().serve(transport).await?;
         Ok(Self {
             ws,
+            addr,
             client,
             shutdown,
         })
     }
 
-    async fn call(
+    pub(crate) async fn call(
         &self,
         tool: &str,
         args: Value,
@@ -83,7 +115,11 @@ impl Harness {
     }
 
     /// Call `tool`, requiring success, and return its text content.
-    async fn text(&self, tool: &str, args: Value) -> Result<String, Box<dyn std::error::Error>> {
+    pub(crate) async fn text(
+        &self,
+        tool: &str,
+        args: Value,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let result = self.call(tool, args).await?;
         let text = text_of(&result)?;
         if result.is_error == Some(true) {
@@ -93,7 +129,7 @@ impl Harness {
     }
 
     /// Call `tool`, requiring success, and return its structured content.
-    async fn structured(
+    pub(crate) async fn structured(
         &self,
         tool: &str,
         args: Value,
@@ -108,7 +144,11 @@ impl Harness {
     }
 
     /// Call `tool`, requiring a tool error, and return its message.
-    async fn error(&self, tool: &str, args: Value) -> Result<String, Box<dyn std::error::Error>> {
+    pub(crate) async fn error(
+        &self,
+        tool: &str,
+        args: Value,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let result = self.call(tool, args.clone()).await?;
         let text = text_of(&result)?;
         if result.is_error != Some(true) {
@@ -121,7 +161,12 @@ impl Harness {
         std::fs::read_to_string(self.ws.markdown(paper))
     }
 
-    async fn stop(self) -> TestResult {
+    /// Wait until the server's next read checks for new index runs.
+    pub(crate) async fn await_fresh_reads(&self) {
+        tokio::time::sleep(SERVE_READ_CONSISTENCY_INTERVAL * 2).await;
+    }
+
+    pub(crate) async fn stop(self) -> TestResult {
         self.client.cancel().await?;
         self.shutdown.cancel();
         Ok(())
@@ -143,7 +188,7 @@ fn config(bind: SocketAddr, ws: &Workspace) -> Result<ServeConfig, paper_mcp::Er
     })
 }
 
-fn text_of(result: &CallToolResult) -> Result<String, Box<dyn std::error::Error>> {
+pub(crate) fn text_of(result: &CallToolResult) -> Result<String, Box<dyn std::error::Error>> {
     let texts: Vec<&str> = result
         .content
         .iter()
@@ -156,7 +201,7 @@ fn text_of(result: &CallToolResult) -> Result<String, Box<dyn std::error::Error>
 }
 
 #[tokio::test]
-async fn lists_exactly_the_read_tools() -> TestResult {
+async fn lists_exactly_the_eight_tools() -> TestResult {
     let h = Harness::start().await?;
     let mut names: Vec<String> = h
         .client
@@ -166,7 +211,7 @@ async fn lists_exactly_the_read_tools() -> TestResult {
         .map(|t| t.name.to_string())
         .collect();
     names.sort();
-    assert_eq!(names, READ_TOOLS);
+    assert_eq!(names, TOOLS);
     h.stop().await
 }
 

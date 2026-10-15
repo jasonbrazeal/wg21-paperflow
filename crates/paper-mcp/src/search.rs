@@ -13,6 +13,7 @@
 //! on title and authors. Both apply the same latest-revision rule.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use paperstore::PaperNum;
 
@@ -146,34 +147,41 @@ pub fn effective_filter(req: &SearchRequest) -> SearchFilter {
 ///
 /// Returns [`Error::Index`] when the store fails and [`Error::Inference`]
 /// when a model fails or the reranker returns the wrong number of scores.
+///
+/// # Panics
+///
+/// Panics when called outside a tokio runtime.
+///
+/// Embedding and reranking run on tokio's blocking thread pool, so a
+/// search never holds an async worker thread for the inference time.
 pub async fn search_chunks<S, E, R>(
     store: &S,
-    embedder: &E,
-    reranker: &R,
+    embedder: &Arc<E>,
+    reranker: &Arc<R>,
     params: &SearchParams,
     req: &SearchRequest,
 ) -> Result<Vec<SearchHit>>
 where
     S: IndexStore + ?Sized,
-    E: Embedder + ?Sized,
-    R: Reranker + ?Sized,
+    E: Embedder + ?Sized + 'static,
+    R: Reranker + ?Sized + 'static,
 {
     let filter = effective_filter(req);
     let top_k = req.top_k.unwrap_or(params.top_k);
     let hits = match req.mode {
         SearchMode::Keyword => store.search_keyword(&req.query, &filter).await?,
         SearchMode::Vector => {
-            let vector = embedder.embed_query(&req.query)?;
+            let vector = embed_query(embedder, &req.query).await?;
             store.search_vector(&vector, &filter, top_k).await?
         }
         SearchMode::Hybrid => {
             let keyword = store.search_keyword(&req.query, &filter).await?;
-            let vector = embedder.embed_query(&req.query)?;
+            let vector = embed_query(embedder, &req.query).await?;
             let nearest = store.search_vector(&vector, &filter, top_k).await?;
             fuse_rrf(keyword, nearest)
         }
     };
-    let hits = rerank_head(reranker, &req.query, hits, params.rerank_depth)?;
+    let hits = rerank_head(reranker, &req.query, hits, params.rerank_depth).await?;
     Ok(hits.into_iter().map(SearchHit::from).collect())
 }
 
@@ -238,9 +246,31 @@ pub(crate) fn fuse_rrf(first: Vec<ChunkHit>, second: Vec<ChunkHit>) -> Vec<Chunk
     fused
 }
 
-/// Let the reranker reorder the first `depth` hits by their prefixed text.
-fn rerank_head<R: Reranker + ?Sized>(
-    reranker: &R,
+/// Run a synchronous model call on tokio's blocking thread pool.
+async fn run_model<T, F>(op: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(op)
+        .await
+        .map_err(|e| Error::Inference(format!("model task failed: {e}")))?
+}
+
+/// Embed `query` off the async worker threads.
+async fn embed_query<E: Embedder + ?Sized + 'static>(
+    embedder: &Arc<E>,
+    query: &str,
+) -> Result<Vec<f32>> {
+    let embedder = Arc::clone(embedder);
+    let query = query.to_owned();
+    run_model(move || embedder.embed_query(&query)).await
+}
+
+/// Let the reranker reorder the first `depth` hits by their prefixed text,
+/// off the async worker threads.
+async fn rerank_head<R: Reranker + ?Sized + 'static>(
+    reranker: &Arc<R>,
     query: &str,
     hits: Vec<ChunkHit>,
     depth: usize,
@@ -253,7 +283,9 @@ fn rerank_head<R: Reranker + ?Sized>(
         .iter()
         .map(|h| h.chunk.prefixed_text.clone())
         .collect();
-    let scores = reranker.rerank(query, &documents)?;
+    let reranker = Arc::clone(reranker);
+    let query = query.to_owned();
+    let scores = run_model(move || reranker.rerank(&query, &documents)).await?;
     if scores.len() != depth {
         return Err(Error::Inference(format!(
             "reranker returned {} scores for {depth} documents",
@@ -404,9 +436,9 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn rerank_reorders_only_the_head() -> Result<()> {
-        let out = rerank_head(&ReverseReranker, "q", five(), 3)?;
+    #[tokio::test]
+    async fn rerank_reorders_only_the_head() -> Result<()> {
+        let out = rerank_head(&Arc::new(ReverseReranker), "q", five(), 3).await?;
         assert_eq!(
             keys(&out),
             vec!["P1R0:3", "P1R0:2", "P1R0:1", "P1R0:4", "P1R0:5"]
@@ -434,9 +466,9 @@ mod tests {
         assert!(out[2].score < out[1].score);
     }
 
-    #[test]
-    fn rerank_depth_beyond_length_reorders_everything() -> Result<()> {
-        let out = rerank_head(&ReverseReranker, "q", five(), 150)?;
+    #[tokio::test]
+    async fn rerank_depth_beyond_length_reorders_everything() -> Result<()> {
+        let out = rerank_head(&Arc::new(ReverseReranker), "q", five(), 150).await?;
         assert_eq!(
             keys(&out),
             vec!["P1R0:5", "P1R0:4", "P1R0:3", "P1R0:2", "P1R0:1"]
@@ -444,9 +476,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn zero_rerank_depth_keeps_the_list() -> Result<()> {
-        let out = rerank_head(&ShortReranker, "q", five(), 0)?;
+    #[tokio::test]
+    async fn zero_rerank_depth_keeps_the_list() -> Result<()> {
+        let out = rerank_head(&Arc::new(ShortReranker), "q", five(), 0).await?;
         assert_eq!(out, five());
         Ok(())
     }
@@ -460,10 +492,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wrong_score_count_is_an_error() {
+    #[tokio::test]
+    async fn wrong_score_count_is_an_error() {
         assert!(matches!(
-            rerank_head(&ShortReranker, "q", five(), 3),
+            rerank_head(&Arc::new(ShortReranker), "q", five(), 3).await,
             Err(Error::Inference(_))
         ));
     }

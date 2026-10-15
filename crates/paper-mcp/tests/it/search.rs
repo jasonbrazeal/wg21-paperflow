@@ -6,6 +6,7 @@
 //! `search_chunks` and `search_metadata` over the indexed fixture workspace.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use paper_mcp::model::fake::{HashEmbedder, IdentityReranker};
 use paper_mcp::{
@@ -53,8 +54,8 @@ fn by_paper(raw: &str) -> SearchFilter {
 async fn search(store: &LanceStore, req: &SearchRequest) -> paper_mcp::Result<Vec<SearchHit>> {
     search_chunks(
         store,
-        &HashEmbedder::default(),
-        &IdentityReranker,
+        &Arc::new(HashEmbedder::default()),
+        &Arc::new(IdentityReranker),
         &SearchParams::default(),
         req,
     )
@@ -113,8 +114,8 @@ async fn top_k_defaults_to_the_server_parameter() -> TestResult {
     let req = request(SearchMode::Vector, SearchFilter::default(), true);
     let hits = search_chunks(
         &store,
-        &HashEmbedder::default(),
-        &IdentityReranker,
+        &Arc::new(HashEmbedder::default()),
+        &Arc::new(IdentityReranker),
         &params,
         &req,
     )

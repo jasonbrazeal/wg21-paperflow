@@ -651,3 +651,27 @@ async fn optimize_builds_the_vector_index_once_enough_rows_exist() -> TestResult
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn read_only_open_never_creates_the_index() -> TestResult {
+    let dir = TempDir::new()?;
+    let dim = HashEmbedder::default().dim();
+    let missing = LanceStore::open_read_only(dir.path(), dim, options()).await;
+    assert!(
+        matches!(&missing, Err(Error::NoIndex(path)) if path == &dir.path().join("lancedb")),
+        "{missing:?}"
+    );
+    assert!(!dir.path().join("lancedb").exists(), "nothing was created");
+
+    open(dir.path()).await?;
+    let store = LanceStore::open_read_only(dir.path(), dim, options()).await?;
+    assert!(
+        store
+            .search_metadata("", &SearchFilter::default())
+            .await?
+            .is_empty()
+    );
+    let wrong_dim = LanceStore::open_read_only(dir.path(), dim + 1, options()).await;
+    assert!(matches!(wrong_dim, Err(Error::Index(_))), "{wrong_dim:?}");
+    Ok(())
+}

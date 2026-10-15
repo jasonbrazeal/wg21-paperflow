@@ -348,7 +348,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-12>
 
-### Step 12: Search tools and end-to-end server behavior
+### Step 12: Search tools and end-to-end server behavior [completed]
 
 - Component: mcp-server
 - `src/server/tools.rs`: `search_papers` (query, required `mode`, filters, `all_revisions`, `top_k`, `cursor`) and `search_metadata` (keywords on title and authors, same filters and `cursor`), each running the search on the first call, storing the full ranked list in a shared `CursorCache` and returning the first page plus `next_cursor`; an expired or unknown cursor returns a tool error. The server opens the index read-only through `LanceStore` with `read_consistency_interval`, so it picks up new index runs without a restart.

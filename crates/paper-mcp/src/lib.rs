@@ -20,7 +20,8 @@
 //! [`search`] runs vector, keyword and hybrid searches with reranking, and
 //! [`cursor`] pages ranked search results through stable server-side cursors.
 //! [`lines`] cuts line ranges out of a paper with Python slice semantics.
-//! [`server`] serves the MCP tools over bearer-authenticated Streamable HTTP.
+//! [`server`] serves the MCP read and search tools over bearer-authenticated
+//! Streamable HTTP.
 
 pub mod chunk;
 pub mod cursor;
@@ -56,7 +57,9 @@ pub use search::{
     effective_filter, search_chunks, search_metadata,
 };
 pub use selection::{Selector, parse_selectors, resolve, resolve_latest};
-pub use server::{BearerToken, MCP_PATH, PaperServer, ServeConfig, ServeOptions, build_app, serve};
+pub use server::{
+    BearerToken, MCP_PATH, PaperServer, SearchIndex, ServeConfig, ServeOptions, build_app, serve,
+};
 pub use store::lance::{LanceStore, LanceStoreOptions};
 pub use store::{
     ChunkHit, ChunkRecord, IndexStore, MetaHit, MetaRecord, PaperFields, PaperRecords,

@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
@@ -16,8 +17,9 @@ use clap::{Parser, Subcommand};
 use paper_mcp::server::config::{DEFAULT_BIND, default_allowed_hosts};
 use paper_mcp::{
     DEFAULT_CURSOR_CAPACITY, DEFAULT_CURSOR_TTL, DEFAULT_PAGE_SIZE, DEFAULT_RERANK_DEPTH,
-    DEFAULT_TOP_K, Embedder as _, IndexLock, IndexOptions, IndexReport, LanceStore, OnnxEmbedder,
-    OnnxReranker, PaperServer, Reranker as _, ServeConfig, ServeOptions, TOOL_NAME,
+    DEFAULT_TOP_K, Embedder as _, IndexLock, IndexOptions, IndexReport, LanceStore,
+    LanceStoreOptions, OnnxEmbedder, OnnxReranker, PaperServer, Reranker as _, SearchIndex,
+    ServeConfig, ServeOptions, TOOL_NAME,
 };
 use paperstore::{StorageBackend as _, default_workspace_dir};
 use paperstore_sqlite::SqliteBackend;
@@ -137,11 +139,25 @@ fn run(cli: Cli) -> Result<ExitCode> {
 
 fn serve(options: ServeOptions) -> Result<ExitCode> {
     let config = ServeConfig::load(options)?;
+    let embedder = OnnxEmbedder::load(&config.model_dir)?;
+    let reranker = OnnxReranker::load(&config.model_dir)?;
     let runtime = tokio::runtime::Runtime::new().context("cannot start the async runtime")?;
     runtime.block_on(async {
         let shutdown = CancellationToken::new();
         tokio::spawn(paper_mcp::server::ctrl_c(shutdown.clone()));
-        let server = PaperServer::new(SqliteBackend::new(&config.workspace)?);
+        let store = LanceStore::open_read_only(
+            &config.tool_dir,
+            embedder.dim(),
+            LanceStoreOptions::default(),
+        )
+        .await?;
+        let index = SearchIndex {
+            store,
+            embedder: Arc::new(embedder),
+            reranker: Arc::new(reranker),
+            params: config.search_params(),
+        };
+        let server = PaperServer::new(SqliteBackend::new(&config.workspace)?, index, config.cursor);
         paper_mcp::serve(&config, server, shutdown).await
     })?;
     Ok(ExitCode::SUCCESS)

@@ -83,6 +83,20 @@ impl Workspace {
         };
         LanceStore::open_with(&self.tool_dir(), HashEmbedder::default().dim(), options).await
     }
+
+    /// Open the existing index read-only, as `serve` does, checking for new
+    /// index runs once `read_consistency_interval` has passed since the
+    /// last check.
+    pub(crate) async fn read_only_store(
+        &self,
+        read_consistency_interval: Duration,
+    ) -> paper_mcp::Result<LanceStore> {
+        let options = LanceStoreOptions {
+            read_consistency_interval,
+            ..LanceStoreOptions::default()
+        };
+        LanceStore::open_read_only(&self.tool_dir(), HashEmbedder::default().dim(), options).await
+    }
 }
 
 pub(crate) fn num(raw: &str) -> PaperNum {
