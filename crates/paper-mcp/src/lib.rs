@@ -16,9 +16,11 @@
 //! [`model`] defines the [`Embedder`] and [`Reranker`] traits and their
 //! local ONNX backends. [`store`] defines the [`IndexStore`] trait and its
 //! LanceDB backend, and [`filter`] the metadata filter shared by every
-//! search side. [`ingest`] ties them together into the `index` run.
+//! search side. [`ingest`] ties them together into the `index` run, and
+//! [`cursor`] pages ranked search results through stable server-side cursors.
 
 pub mod chunk;
+pub mod cursor;
 pub mod error;
 pub mod filter;
 pub mod format;
@@ -29,6 +31,10 @@ pub mod selection;
 pub mod store;
 
 pub use chunk::{CHUNKER_VERSION, Chunk, Section, chunk_markdown, outline};
+pub use cursor::{
+    Clock, CursorCache, CursorConfig, CursorError, DEFAULT_CURSOR_CAPACITY, DEFAULT_CURSOR_TTL,
+    DEFAULT_PAGE_SIZE, Page, SystemClock,
+};
 pub use error::{Error, Result};
 pub use filter::SearchFilter;
 pub use format::{IndexFormatVersion, content_hash};

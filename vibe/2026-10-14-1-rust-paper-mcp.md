@@ -300,7 +300,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-8>
 
-### Step 8: Cursor cache
+### Step 8: Cursor cache [completed]
 
 - Component: search-and-paging
 - Placement: after paper-mcp-core, whose store it queries. Search and paging is a reusable query library that the server and the evaluation harness both call.
