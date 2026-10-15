@@ -7,4 +7,5 @@
 
 mod cli;
 mod ingest;
+mod search;
 mod store;

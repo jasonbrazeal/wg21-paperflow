@@ -17,6 +17,7 @@
 //! local ONNX backends. [`store`] defines the [`IndexStore`] trait and its
 //! LanceDB backend, and [`filter`] the metadata filter shared by every
 //! search side. [`ingest`] ties them together into the `index` run, and
+//! [`search`] runs vector, keyword and hybrid searches with reranking, and
 //! [`cursor`] pages ranked search results through stable server-side cursors.
 
 pub mod chunk;
@@ -27,6 +28,7 @@ pub mod format;
 pub mod ingest;
 pub mod model;
 pub mod prefix;
+pub mod search;
 pub mod selection;
 pub mod store;
 
@@ -44,6 +46,10 @@ pub use ingest::{
 pub use model::onnx::{OnnxEmbedder, OnnxReranker};
 pub use model::{Embedder, MODEL_DIR_ENV, Reranker, resolve_model_dir};
 pub use prefix::{PREFIX_VERSION, build_prefix, prefixed_text};
+pub use search::{
+    DEFAULT_RERANK_DEPTH, DEFAULT_TOP_K, RRF_K, SearchHit, SearchMode, SearchParams, SearchRequest,
+    effective_filter, search_chunks, search_metadata,
+};
 pub use selection::{Selector, parse_selectors, resolve, resolve_latest};
 pub use store::lance::{LanceStore, LanceStoreOptions};
 pub use store::{

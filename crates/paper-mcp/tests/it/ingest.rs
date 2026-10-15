@@ -26,19 +26,19 @@ const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
 /// Large fixture papers shared with the chunker tests, copied in by name.
 const SHARED_MARKDOWN: [&str; 2] = ["p2169r4.md", "p2322r4.md"];
 
-const ALL_PAPERS: [&str; 14] = [
+pub(crate) const ALL_PAPERS: [&str; 14] = [
     "N4950", "P2169R4", "P2300R0", "P2300R1", "P2300R10", "P2300R2", "P2300R3", "P2300R4",
     "P2300R5", "P2300R6", "P2300R7", "P2300R8", "P2300R9", "P2322R4",
 ];
 
 /// A temporary paperstore workspace built from `tests/fixtures/workspace`.
-struct Workspace {
+pub(crate) struct Workspace {
     dir: TempDir,
-    backend: SqliteBackend,
+    pub(crate) backend: SqliteBackend,
 }
 
 impl Workspace {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub(crate) fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let papers = dir.path().join("paperstore");
         std::fs::create_dir_all(&papers)?;
@@ -72,7 +72,7 @@ impl Workspace {
             .join(format!("{}.md", paper.to_ascii_lowercase()))
     }
 
-    async fn store(&self) -> paper_mcp::Result<LanceStore> {
+    pub(crate) async fn store(&self) -> paper_mcp::Result<LanceStore> {
         let options = LanceStoreOptions {
             read_consistency_interval: Duration::ZERO,
             ..LanceStoreOptions::default()
@@ -81,15 +81,15 @@ impl Workspace {
     }
 }
 
-fn num(raw: &str) -> PaperNum {
+pub(crate) fn num(raw: &str) -> PaperNum {
     PaperNum::parse(raw).unwrap_or_else(|e| panic!("parse {raw}: {e}"))
 }
 
-fn nums(raws: &[&str]) -> Vec<PaperNum> {
+pub(crate) fn nums(raws: &[&str]) -> Vec<PaperNum> {
     raws.iter().map(|r| num(r)).collect()
 }
 
-fn options() -> IndexOptions {
+pub(crate) fn options() -> IndexOptions {
     IndexOptions::new(&HashEmbedder::default(), IdentityReranker.id())
 }
 
@@ -101,7 +101,7 @@ fn forced() -> IndexOptions {
 }
 
 /// Index `papers`, turning a failed optimization into an error.
-async fn run(
+pub(crate) async fn run(
     backend: &dyn StorageBackend,
     store: &LanceStore,
     papers: &[PaperNum],

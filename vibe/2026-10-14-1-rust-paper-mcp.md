@@ -312,7 +312,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-9>
 
-### Step 9: Search pipeline
+### Step 9: Search pipeline [completed]
 
 - Component: search-and-paging
 - `src/search.rs`: `SearchMode` (`Vector`, `Keyword`, `Hybrid`), `SearchRequest` (query, mode, `SearchFilter`, `all_revisions`, `top_k` override), `SearchParams` (`top_k` default 1000, `rerank_depth` default 150), `SearchHit` (paper id with revision, title, heading path, start, end, unprefixed text, score), `search_chunks(store, embedder, reranker, params, req) -> Vec<SearchHit>`: latest-only filter unless `all_revisions` or a versioned paper id; keyword returns every match, vector returns `top_k`, hybrid fuses every keyword match with the `top_k` nearest via RRF (`RRF_K` constant, deduplicated by chunk); the reranker reorders the first `rerank_depth` hits and the rest keep their order. `search_metadata(store, req) -> Vec<MetaRecord>` returns every matching metadata row.
