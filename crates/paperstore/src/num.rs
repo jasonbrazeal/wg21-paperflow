@@ -10,7 +10,8 @@ use crate::error::{Error, Result};
 /// The shape is one or more ASCII letters, one or more digits, and an
 /// optional `R` followed by one or more digits: `P4003R2`, `N4950`,
 /// `D1234R0`. `R` is reserved as the revision marker, so it cannot appear
-/// in the letter prefix.
+/// in the letter prefix. Standing documents use the separate shape `SD-`
+/// followed by one or more digits, with no revision: `SD-1`, `SD-5`.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PaperNum(String);
 
@@ -60,7 +61,12 @@ impl FromStr for PaperNum {
     }
 }
 
+const SD_PREFIX: &str = "SD-";
+
 fn is_valid_shape(s: &str) -> bool {
+    if let Some(digits) = s.strip_prefix(SD_PREFIX) {
+        return !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    }
     let bytes = s.as_bytes();
     let mut i = 0;
     // `R` is excluded from the prefix: it is reserved as the revision marker,
@@ -111,6 +117,33 @@ mod tests {
     fn parse_rejects_invalid_shapes_with_original_string() {
         for raw in [
             "", "   ", "4003", "P", "PR2", "P4003R", "P4003 R2", "P4003R2x", "R2",
+        ] {
+            match PaperNum::parse(raw) {
+                Err(Error::BadPaperNum(carried)) => assert_eq!(carried, raw),
+                other => panic!("{raw:?} should fail with BadPaperNum, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_accepts_and_normalizes_sd_numbers() {
+        for (raw, want, stem) in [
+            ("SD-1", "SD-1", "sd-1"),
+            ("sd-5", "SD-5", "sd-5"),
+            ("  Sd-12 ", "SD-12", "sd-12"),
+        ] {
+            let num =
+                PaperNum::parse(raw).unwrap_or_else(|e| panic!("{raw:?} should parse, got {e}"));
+            assert_eq!(num.as_str(), want);
+            assert_eq!(num.to_string(), want);
+            assert_eq!(num.stem(), stem);
+        }
+    }
+
+    #[test]
+    fn parse_rejects_invalid_sd_shapes_with_original_string() {
+        for raw in [
+            "SD-", "SD-R1", "SD-1R2", "SD--1", "SD-1x", "SD-1-2", "P-1", "-1", "SD -1",
         ] {
             match PaperNum::parse(raw) {
                 Err(Error::BadPaperNum(carried)) => assert_eq!(carried, raw),
