@@ -8,4 +8,5 @@
 mod cli;
 mod ingest;
 mod search;
+mod server;
 mod store;

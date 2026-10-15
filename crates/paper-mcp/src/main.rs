@@ -5,18 +5,23 @@
 
 //! The `paper-mcp` command: index WG21 papers and serve search over MCP.
 
+use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
 use clap::{Parser, Subcommand};
+use paper_mcp::server::config::{DEFAULT_BIND, default_allowed_hosts};
 use paper_mcp::{
-    Embedder as _, IndexLock, IndexOptions, IndexReport, LanceStore, OnnxEmbedder, OnnxReranker,
-    Reranker as _, TOOL_NAME,
+    DEFAULT_CURSOR_CAPACITY, DEFAULT_CURSOR_TTL, DEFAULT_PAGE_SIZE, DEFAULT_RERANK_DEPTH,
+    DEFAULT_TOP_K, Embedder as _, IndexLock, IndexOptions, IndexReport, LanceStore, OnnxEmbedder,
+    OnnxReranker, PaperServer, Reranker as _, ServeConfig, ServeOptions, TOOL_NAME,
 };
 use paperstore::{StorageBackend as _, default_workspace_dir};
 use paperstore_sqlite::SqliteBackend;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
 /// Name of the paperstore database inside the workspace directory.
@@ -47,8 +52,61 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         model_dir: Option<PathBuf>,
     },
-    /// Serve search over MCP Streamable HTTP.
-    Serve,
+    /// Serve search over MCP Streamable HTTP, behind a bearer token.
+    Serve(ServeArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct ServeArgs {
+    /// Address to listen on.
+    #[arg(long, default_value_t = DEFAULT_BIND, value_name = "ADDR")]
+    bind: SocketAddr,
+    /// File holding the bearer token; defaults to `$PAPER_MCP_TOKEN`.
+    #[arg(long, value_name = "FILE")]
+    token_file: Option<PathBuf>,
+    /// Model directory; defaults to `$PAPER_MCP_MODEL_DIR`.
+    #[arg(long, value_name = "DIR")]
+    model_dir: Option<PathBuf>,
+    /// Accepted `Host` header value; repeat for several. Replaces the
+    /// loopback defaults, so a server behind a proxy names its public host.
+    #[arg(long = "allowed-host", value_name = "HOST", default_values_t = default_allowed_hosts())]
+    allowed_hosts: Vec<String>,
+    /// Default number of nearest chunks a vector or hybrid search returns.
+    #[arg(long, default_value_t = non_zero(DEFAULT_TOP_K), value_name = "N")]
+    top_k: NonZeroUsize,
+    /// Number of leading results the reranker reorders.
+    #[arg(long, default_value_t = non_zero(DEFAULT_RERANK_DEPTH), value_name = "N")]
+    rerank_depth: NonZeroUsize,
+    /// Results per page.
+    #[arg(long, default_value_t = DEFAULT_PAGE_SIZE, value_name = "N")]
+    page_size: NonZeroUsize,
+    /// Idle seconds after which a stored result list expires.
+    #[arg(long, default_value_t = DEFAULT_CURSOR_TTL.as_secs(), value_name = "SECS")]
+    cursor_ttl_secs: u64,
+    /// Maximum number of stored result lists.
+    #[arg(long, default_value_t = DEFAULT_CURSOR_CAPACITY, value_name = "N")]
+    cursor_capacity: NonZeroUsize,
+}
+
+impl From<ServeArgs> for ServeOptions {
+    fn from(args: ServeArgs) -> Self {
+        Self {
+            bind: args.bind,
+            token_file: args.token_file,
+            model_dir: args.model_dir,
+            allowed_hosts: args.allowed_hosts,
+            top_k: args.top_k,
+            rerank_depth: args.rerank_depth,
+            page_size: args.page_size,
+            cursor_ttl: Duration::from_secs(args.cursor_ttl_secs),
+            cursor_capacity: args.cursor_capacity,
+        }
+    }
+}
+
+/// Convert a default to [`NonZeroUsize`], mapping zero to one.
+fn non_zero(n: usize) -> NonZeroUsize {
+    NonZeroUsize::new(n).unwrap_or(NonZeroUsize::MIN)
 }
 
 fn main() -> ExitCode {
@@ -73,8 +131,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
             workers,
             model_dir,
         } => index(&selectors, force, workers, model_dir),
-        Command::Serve => bail!("serve is not implemented yet"),
+        Command::Serve(args) => serve(args.into()),
     }
+}
+
+fn serve(options: ServeOptions) -> Result<ExitCode> {
+    let config = ServeConfig::load(options)?;
+    let runtime = tokio::runtime::Runtime::new().context("cannot start the async runtime")?;
+    runtime.block_on(async {
+        let shutdown = CancellationToken::new();
+        tokio::spawn(paper_mcp::server::ctrl_c(shutdown.clone()));
+        paper_mcp::serve(&config, PaperServer::new(), shutdown).await
+    })?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn index(

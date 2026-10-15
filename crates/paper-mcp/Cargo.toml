@@ -18,6 +18,7 @@ test-models = []
 anyhow = "1.0.104"
 arrow-array = "=58.4.0"
 arrow-schema = "=58.4.0"
+axum = "0.8.9"
 clap = { version = "4.6.6", features = ["derive"] }
 # Without default features fastembed has no Hugging Face Hub client, so it
 # cannot download models; only ONNX Runtime's binaries are fetched, at build time.
@@ -34,18 +35,26 @@ lancedb = { version = "=0.40.0", features = ["remote"] }
 ort = { version = "=2.0.0-rc.13", default-features = false }
 paperstore = { version = "0.1.0", path = "../paperstore" }
 paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
+rmcp = { version = "3.5.1", features = ["server", "macros", "transport-streamable-http-server"] }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+subtle = "2.6.1"
 thiserror = "2.0.20"
-tokio = { version = "1.53.1", features = ["rt-multi-thread"] }
+tokio = { version = "1.53.1", features = ["net", "rt-multi-thread", "signal"] }
 tokenizers = { version = "0.23.2", default-features = false, features = ["onig"] }
+tokio-util = "0.7.19"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [dev-dependencies]
+http-body-util = "0.1.5"
 # Integration tests build against the library with the test-double models.
 paper-mcp = { path = ".", features = ["test-models"] }
+rmcp = { version = "3.5.1", features = ["client", "transport-streamable-http-client"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 temp-env = "0.3.6"
 tempfile = "3.27.0"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5.3", features = ["util"] }

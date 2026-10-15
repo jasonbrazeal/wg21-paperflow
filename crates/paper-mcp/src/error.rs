@@ -91,6 +91,44 @@ pub enum Error {
         source: std::io::Error,
     },
 
+    /// Neither `--token-file` nor the token environment variable is set.
+    #[error("no bearer token: pass --token-file or set PAPER_MCP_TOKEN")]
+    NoToken,
+
+    /// The bearer token file could not be read.
+    #[error("cannot read token file {}: {source}", path.display())]
+    TokenFileRead {
+        /// The token file.
+        path: PathBuf,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+
+    /// The bearer token is unusable. The message never contains the token.
+    #[error("invalid bearer token: {0}")]
+    InvalidToken(&'static str),
+
+    /// The workspace has no paperstore database.
+    #[error("no paperstore database at {}; check WG21_DATA_DIR", .0.display())]
+    NoPaperstoreDb(PathBuf),
+
+    /// The workspace has no index.
+    #[error("no index at {}; run `paper-mcp index` first", .0.display())]
+    NoIndex(PathBuf),
+
+    /// The server could not bind its listen address.
+    #[error("cannot listen on {addr}: {source}")]
+    Bind {
+        /// The listen address.
+        addr: std::net::SocketAddr,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+
+    /// The HTTP server failed while running.
+    #[error("server failed: {0}")]
+    Serve(std::io::Error),
+
     /// A paperstore operation failed.
     #[error(transparent)]
     Store(#[from] paperstore::Error),

@@ -383,6 +383,43 @@ impl Weights for OnDiskWeights {
     }
 }
 
+/// Check that `model_dir` holds every required file of both models,
+/// without reading or loading them.
+///
+/// # Errors
+///
+/// Returns [`Error::MissingModelFiles`] for the first model subdirectory
+/// that lacks a required file, naming every absent file in it.
+pub fn check_model_files(model_dir: &Path) -> Result<()> {
+    for sub in [EMBEDDER_SUBDIR, RERANKER_SUBDIR] {
+        require_files(model_dir, sub)?;
+    }
+    Ok(())
+}
+
+/// Return `model_dir/sub` when it holds every required model file.
+fn require_files(model_dir: &Path, sub: &str) -> Result<PathBuf> {
+    let dir = model_dir.join(sub);
+    let expected: Vec<String> = std::iter::once(ONNX_FILE)
+        .chain(TOKENIZER_FILES)
+        .map(str::to_owned)
+        .collect();
+    let missing: Vec<String> = expected
+        .iter()
+        .filter(|name| !dir.join(name).exists())
+        .cloned()
+        .collect();
+    if missing.is_empty() {
+        Ok(dir)
+    } else {
+        Err(Error::MissingModelFiles {
+            dir,
+            missing,
+            expected,
+        })
+    }
+}
+
 /// The files of one model subdirectory, read and validated.
 struct ModelFiles<W> {
     dir: PathBuf,
@@ -400,24 +437,7 @@ impl<W: Weights> ModelFiles<W> {
     /// The model id is `sub` plus a digest of every file read, so changing
     /// any of them changes the id. The id does not depend on `W`.
     fn read(model_dir: &Path, sub: &str, optional: &[&'static str]) -> Result<Self> {
-        let dir = model_dir.join(sub);
-        let expected: Vec<String> = std::iter::once(ONNX_FILE)
-            .chain(TOKENIZER_FILES)
-            .map(str::to_owned)
-            .collect();
-        let missing: Vec<String> = expected
-            .iter()
-            .filter(|name| !dir.join(name).exists())
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            return Err(Error::MissingModelFiles {
-                dir,
-                missing,
-                expected,
-            });
-        }
-
+        let dir = require_files(model_dir, sub)?;
         let mut digest = FileDigest(Sha256::new());
         let weights = W::take(&dir, &mut digest)?;
         let [

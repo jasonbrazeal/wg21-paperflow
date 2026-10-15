@@ -322,7 +322,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-10>
 
-### Step 10: Server configuration, bearer auth and Streamable HTTP host
+### Step 10: Server configuration, bearer auth and Streamable HTTP host [completed]
 
 - Component: mcp-server
 - Placement: after search-and-paging, whose search functions and cursor cache back the tools. This component is the shippable shared service.

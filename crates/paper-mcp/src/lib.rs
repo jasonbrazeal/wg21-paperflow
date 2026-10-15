@@ -19,6 +19,7 @@
 //! search side. [`ingest`] ties them together into the `index` run, and
 //! [`search`] runs vector, keyword and hybrid searches with reranking, and
 //! [`cursor`] pages ranked search results through stable server-side cursors.
+//! [`server`] serves the MCP tools over bearer-authenticated Streamable HTTP.
 
 pub mod chunk;
 pub mod cursor;
@@ -30,6 +31,7 @@ pub mod model;
 pub mod prefix;
 pub mod search;
 pub mod selection;
+pub mod server;
 pub mod store;
 
 pub use chunk::{CHUNKER_VERSION, Chunk, Section, chunk_markdown, outline};
@@ -51,6 +53,7 @@ pub use search::{
     effective_filter, search_chunks, search_metadata,
 };
 pub use selection::{Selector, parse_selectors, resolve, resolve_latest};
+pub use server::{BearerToken, MCP_PATH, PaperServer, ServeConfig, ServeOptions, build_app, serve};
 pub use store::lance::{LanceStore, LanceStoreOptions};
 pub use store::{
     ChunkHit, ChunkRecord, IndexStore, MetaHit, MetaRecord, PaperFields, PaperRecords,
