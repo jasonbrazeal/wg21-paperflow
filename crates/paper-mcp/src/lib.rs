@@ -39,7 +39,7 @@ pub mod selection;
 pub mod server;
 pub mod store;
 
-pub use chunk::{CHUNKER_VERSION, Chunk, Section, chunk_markdown, outline};
+pub use chunk::{CHUNKER_VERSION, Chunk, DEFAULT_CHUNK_BUDGET, Section, chunk_markdown, outline};
 pub use cursor::{
     Clock, CursorCache, CursorConfig, CursorError, DEFAULT_CURSOR_CAPACITY, DEFAULT_CURSOR_TTL,
     DEFAULT_PAGE_SIZE, Page, SystemClock,
@@ -66,7 +66,10 @@ pub use selection::{Selector, parse_selectors, resolve, resolve_latest};
 pub use server::{
     BearerToken, MCP_PATH, PaperServer, SearchIndex, ServeConfig, ServeOptions, build_app, serve,
 };
-pub use store::lance::{LanceStore, LanceStoreOptions};
+pub use store::lance::{
+    FTS_BASE_TOKENIZER, FTS_REMOVE_STOP_WORDS, FTS_STEM, KeywordBase, KeywordTokenizer, LanceStore,
+    LanceStoreOptions,
+};
 pub use store::{
     ChunkHit, ChunkRecord, IndexStore, MetaHit, MetaRecord, PaperFields, PaperRecords,
 };

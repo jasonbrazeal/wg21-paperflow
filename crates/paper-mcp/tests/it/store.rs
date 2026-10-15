@@ -10,8 +10,9 @@ use std::time::Duration;
 
 use paper_mcp::model::fake::HashEmbedder;
 use paper_mcp::{
-    ChunkHit, ChunkRecord, Embedder, Error, IndexStore, LanceStore, LanceStoreOptions, MetaRecord,
-    PaperFields, PaperRecords, SearchFilter, build_prefix, prefixed_text,
+    ChunkHit, ChunkRecord, Embedder, Error, IndexStore, KeywordBase, KeywordTokenizer, LanceStore,
+    LanceStoreOptions, MetaRecord, PaperFields, PaperRecords, SearchFilter, build_prefix,
+    prefixed_text,
 };
 use paperstore::{PaperNum, PaperRow};
 use tempfile::TempDir;
@@ -433,6 +434,73 @@ async fn keyword_search_matches_cpp_identifiers() -> TestResult {
             .is_empty()
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn rebuilt_keyword_index_follows_the_tokenizer_settings() -> TestResult {
+    let dir = TempDir::new()?;
+    let store = open(dir.path()).await?;
+    assert_eq!(store.keyword_tokenizer(), &KeywordTokenizer::default());
+    store
+        .upsert_paper(records(
+            "P0288R9",
+            &[
+                "Add `std::move_only_function`, a move-only wrapper.",
+                "The wrappers are not copyable.",
+            ],
+        ))
+        .await?;
+    let all = SearchFilter::default();
+    let matches = async |store: &LanceStore, query: &str| -> paper_mcp::Result<Vec<String>> {
+        let mut got = ids(&store.search_keyword(query, &all).await?);
+        got.sort();
+        Ok(got)
+    };
+    assert_eq!(matches(&store, "wrappers").await?, vec!["P0288R9@11"]);
+    assert!(matches(&store, "move_only_function").await?.is_empty());
+
+    let stemmed = LanceStore::open_with(
+        dir.path(),
+        HashEmbedder::default().dim(),
+        LanceStoreOptions {
+            keyword_tokenizer: KeywordTokenizer {
+                stem: true,
+                ..KeywordTokenizer::default()
+            },
+            ..options()
+        },
+    )
+    .await?;
+    stemmed.rebuild_keyword_indexes().await?;
+    assert_eq!(
+        matches(&stemmed, "wrappers").await?,
+        vec!["P0288R9@1", "P0288R9@11"]
+    );
+
+    let simple = LanceStore::open_with(
+        dir.path(),
+        HashEmbedder::default().dim(),
+        LanceStoreOptions {
+            keyword_tokenizer: KeywordTokenizer {
+                base: KeywordBase::Simple,
+                ..KeywordTokenizer::default()
+            },
+            ..options()
+        },
+    )
+    .await?;
+    simple.rebuild_keyword_indexes().await?;
+    assert_eq!(matches(&simple, "move_only_function").await?, vec!["P0288R9@1"]);
+    assert_eq!(matches(&simple, "wrappers").await?, vec!["P0288R9@11"]);
+    Ok(())
+}
+
+#[test]
+fn keyword_base_parses_its_names() {
+    for base in [KeywordBase::Whitespace, KeywordBase::Simple] {
+        assert_eq!(base.name().parse::<KeywordBase>().ok(), Some(base));
+    }
+    assert!("ngram".parse::<KeywordBase>().is_err());
 }
 
 #[tokio::test]

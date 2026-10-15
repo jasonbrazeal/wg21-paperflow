@@ -11,6 +11,13 @@
 /// heading paths or chunk text for any input.
 pub const CHUNKER_VERSION: u32 = 1;
 
+/// Largest chunk, in embedder tokens, before the prefix is added, chosen by
+/// the golden-set evaluation (`eval/RESULTS.md`).
+///
+/// Changing it changes every chunk, so it must ship with a
+/// [`CHUNKER_VERSION`] bump.
+pub const DEFAULT_CHUNK_BUDGET: usize = 512;
+
 /// One chunk of a paper's Markdown.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chunk {

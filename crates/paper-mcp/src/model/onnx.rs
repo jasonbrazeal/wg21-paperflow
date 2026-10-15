@@ -57,6 +57,13 @@ pub const EMBEDDER_POOLING_FILE: &str = "1_Pooling/config.json";
 /// Optional text an embedder prepends to queries.
 pub const QUERY_INSTRUCTION_FILE: &str = "query_instruction.txt";
 
+/// Texts embedded, or documents reranked, per inference call. Activation
+/// memory grows with batch size times squared sequence length, so a paper of
+/// many full-length chunks in one batch of fastembed's default 256 exhausts
+/// the memory of a small host; this bound keeps a batch near half a gigabyte
+/// for a 12-head, 512-token model.
+pub const INFERENCE_BATCH_SIZE: usize = 32;
+
 /// Text embedded once at load time to learn the vector length.
 const DIM_PROBE_TEXT: &str = "dimension probe";
 
@@ -148,7 +155,7 @@ impl OnnxEmbedder {
             .model
             .lock()
             .map_err(|_| Error::Inference("embedder lock poisoned".to_owned()))?
-            .embed(texts, None)
+            .embed(texts, Some(INFERENCE_BATCH_SIZE))
             .map_err(|e| Error::Inference(e.to_string()))?;
         if vectors.len() != texts.len() || vectors.iter().any(|v| v.len() != self.dim) {
             return Err(Error::Inference(format!(
@@ -270,7 +277,12 @@ impl Reranker for OnnxReranker {
             .model
             .lock()
             .map_err(|_| Error::Inference("reranker lock poisoned".to_owned()))?
-            .rerank(query.to_owned(), documents, false, None)
+            .rerank(
+                query.to_owned(),
+                documents,
+                false,
+                Some(INFERENCE_BATCH_SIZE),
+            )
             .map_err(|e| Error::Inference(e.to_string()))?;
         let mut scores = vec![None; documents.len()];
         for result in results {
@@ -1046,6 +1058,9 @@ mod tests {
         let dot = |x: &[f32], y: &[f32]| x.iter().zip(y).map(|(p, r)| p * r).sum::<f32>();
         assert!(dot(&q, &a[0]) > dot(&q, &a[1]));
         assert_eq!(e.embed_documents(&[]).ok(), Some(vec![]));
+        let many = vec![texts[0].clone(); INFERENCE_BATCH_SIZE + 1];
+        let batched = e.embed_documents(&many).ok().unwrap_or_default();
+        assert_eq!(batched.len(), many.len(), "a second batch was dropped");
     }
 
     #[test]

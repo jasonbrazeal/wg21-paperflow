@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use paperstore::{PaperNum, PaperRow, StorageBackend};
 
+pub use crate::chunk::DEFAULT_CHUNK_BUDGET;
 use crate::chunk::chunk_markdown;
 use crate::error::{Error, Result};
 use crate::format::{IndexFormatVersion, content_hash};
@@ -31,12 +32,6 @@ pub const TOOL_NAME: &str = "paper-mcp";
 
 /// Name of the writer lock file inside the index directory.
 pub const LOCK_FILE: &str = "index.lock";
-
-/// Largest chunk, in embedder tokens, before the prefix is added.
-///
-/// Changing it changes every chunk, so it must ship with a
-/// [`crate::CHUNKER_VERSION`] bump.
-pub const DEFAULT_CHUNK_BUDGET: usize = 512;
 
 /// Embedder tokens kept free for the prefix when the embedder's input limit
 /// is what bounds the chunk budget.

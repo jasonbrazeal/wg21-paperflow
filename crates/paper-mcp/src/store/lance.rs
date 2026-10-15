@@ -29,7 +29,7 @@ use lancedb::index::scalar::{FtsIndexBuilder, FullTextSearchQuery};
 use lancedb::index::vector::IvfHnswSqIndexBuilder;
 use lancedb::query::{ExecutableQuery as _, QueryBase as _, Select};
 use lancedb::table::OptimizeAction;
-use lancedb::{Connection, DistanceType, Table, connect};
+use lancedb::{Connection, DistanceType, ObjectStoreRegistry, Session, Table, connect};
 use paperstore::{PaperNum, PaperRow};
 
 use crate::error::{Error, Result};
@@ -58,8 +58,26 @@ pub const DEFAULT_READ_CONSISTENCY_INTERVAL: Duration = Duration::from_secs(5);
 /// its partitions on.
 pub const DEFAULT_VECTOR_INDEX_MIN_ROWS: usize = 10_000;
 
-/// Base tokenizer of every full-text index: split on whitespace only.
-const FTS_BASE_TOKENIZER: &str = "whitespace";
+/// Default [`LanceStoreOptions::index_cache_bytes`]. LanceDB's own default,
+/// 6 GiB, plus its metadata cache let a full-corpus index run outgrow the
+/// memory of a small host.
+pub const DEFAULT_INDEX_CACHE_BYTES: usize = 2 << 30;
+
+/// Default [`LanceStoreOptions::metadata_cache_bytes`]. LanceDB's own
+/// default is 1 GiB.
+pub const DEFAULT_METADATA_CACHE_BYTES: usize = 256 << 20;
+
+/// Base tokenizer of every full-text index, chosen by the golden-set
+/// evaluation (`eval/RESULTS.md`): split on whitespace only, so that C++
+/// identifiers stay whole.
+pub const FTS_BASE_TOKENIZER: KeywordBase = KeywordBase::Whitespace;
+
+/// Whether full-text indexes stem tokens, chosen by the golden-set evaluation.
+pub const FTS_STEM: bool = false;
+
+/// Whether full-text indexes drop stop words, chosen by the golden-set
+/// evaluation.
+pub const FTS_REMOVE_STOP_WORDS: bool = false;
 
 /// Whether full-text indexes lowercase tokens.
 const FTS_LOWER_CASE: bool = true;
@@ -106,6 +124,12 @@ const COL_STATUS: &str = "status";
 const COL_FTS_TITLE: &str = "fts_title";
 const COL_FTS_AUTHORS: &str = "fts_authors";
 
+/// Keyword-indexed columns of the chunks table.
+const CHUNK_FTS_COLUMNS: &[&str] = &[COL_FTS_TEXT];
+
+/// Keyword-indexed columns of the metadata table.
+const META_FTS_COLUMNS: &[&str] = &[COL_FTS_TITLE, COL_FTS_AUTHORS];
+
 /// Column LanceDB adds to vector results: the distance to the query.
 const COL_DISTANCE: &str = "_distance";
 
@@ -121,6 +145,15 @@ pub struct LanceStoreOptions {
     /// Row count at which [`IndexStore::optimize`] first builds the
     /// approximate vector index. Smaller tables are searched exactly.
     pub vector_index_min_rows: usize,
+    /// Tokenizer of the full-text indexes created by [`LanceStore::open_with`]
+    /// and [`LanceStore::rebuild_keyword_indexes`]. Existing indexes keep the
+    /// tokenizer they were built with until rebuilt.
+    pub keyword_tokenizer: KeywordTokenizer,
+    /// Most bytes of index data (vector and full-text) cached in memory.
+    pub index_cache_bytes: usize,
+    /// Most bytes of table metadata (manifests, fragment and deletion
+    /// files) cached in memory.
+    pub metadata_cache_bytes: usize,
 }
 
 impl Default for LanceStoreOptions {
@@ -128,6 +161,67 @@ impl Default for LanceStoreOptions {
         Self {
             read_consistency_interval: DEFAULT_READ_CONSISTENCY_INTERVAL,
             vector_index_min_rows: DEFAULT_VECTOR_INDEX_MIN_ROWS,
+            keyword_tokenizer: KeywordTokenizer::default(),
+            index_cache_bytes: DEFAULT_INDEX_CACHE_BYTES,
+            metadata_cache_bytes: DEFAULT_METADATA_CACHE_BYTES,
+        }
+    }
+}
+
+/// How a full-text index splits the keyword text into tokens.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeywordBase {
+    /// Split on whitespace only, keeping punctuation inside tokens.
+    Whitespace,
+    /// Split on every character that is not a letter or digit, so
+    /// `std::move_only_function` becomes `std`, `move`, `only`, `function`.
+    Simple,
+}
+
+impl KeywordBase {
+    /// Return the tokenizer name LanceDB uses, which [`str::parse`] accepts.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Whitespace => "whitespace",
+            Self::Simple => "simple",
+        }
+    }
+}
+
+impl std::str::FromStr for KeywordBase {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "whitespace" => Ok(Self::Whitespace),
+            "simple" => Ok(Self::Simple),
+            other => Err(Error::Index(format!(
+                "unknown keyword tokenizer {other:?}; expected whitespace or simple"
+            ))),
+        }
+    }
+}
+
+/// Tokenizer settings of the full-text indexes. Tokens are always lowercased.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KeywordTokenizer {
+    /// How text is split into tokens.
+    pub base: KeywordBase,
+    /// Whether tokens are reduced to their English stems.
+    pub stem: bool,
+    /// Whether English stop words are dropped.
+    pub remove_stop_words: bool,
+}
+
+impl Default for KeywordTokenizer {
+    /// Return the pinned settings: [`FTS_BASE_TOKENIZER`], [`FTS_STEM`] and
+    /// [`FTS_REMOVE_STOP_WORDS`].
+    fn default() -> Self {
+        Self {
+            base: FTS_BASE_TOKENIZER,
+            stem: FTS_STEM,
+            remove_stop_words: FTS_REMOVE_STOP_WORDS,
         }
     }
 }
@@ -184,12 +278,14 @@ impl LanceStore {
         let path = tool_dir.join(LANCEDB_DIR);
         let db = connect_db(&path, &options).await?;
         let names = table_names(&db).await?;
+        let tokenizer = &options.keyword_tokenizer;
         let chunks = open_or_create(
             &db,
             &names,
             CHUNKS_TABLE,
             chunks_schema(dim)?,
-            &[COL_FTS_TEXT],
+            CHUNK_FTS_COLUMNS,
+            tokenizer,
         )
         .await?;
         let meta = open_or_create(
@@ -197,7 +293,8 @@ impl LanceStore {
             &names,
             META_TABLE,
             meta_schema(),
-            &[COL_FTS_TITLE, COL_FTS_AUTHORS],
+            META_FTS_COLUMNS,
+            tokenizer,
         )
         .await?;
         Self::from_tables(chunks, meta, dim, options).await
@@ -259,6 +356,32 @@ impl LanceStore {
             dim,
             options,
         })
+    }
+
+    /// Return the tokenizer settings this handle builds full-text indexes with.
+    #[must_use]
+    pub fn keyword_tokenizer(&self) -> &KeywordTokenizer {
+        &self.options.keyword_tokenizer
+    }
+
+    /// Replace every full-text index with one built by
+    /// [`LanceStoreOptions::keyword_tokenizer`] over the rows already stored.
+    ///
+    /// Keyword search, here and in every other handle, uses the new
+    /// tokenizer once this returns. Only the index writer may call it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Index`] when an index cannot be built.
+    pub async fn rebuild_keyword_indexes(&self) -> Result<()> {
+        let tokenizer = &self.options.keyword_tokenizer;
+        for (table, columns) in [
+            (&self.chunks, CHUNK_FTS_COLUMNS),
+            (&self.meta, META_FTS_COLUMNS),
+        ] {
+            create_fts_indexes(table, columns, tokenizer).await?;
+        }
+        Ok(())
     }
 
     /// Return whether the chunks table has an approximate vector index.
@@ -558,21 +681,44 @@ fn index_err<E: std::fmt::Display>(context: &'static str) -> impl FnOnce(E) -> E
     move |e| Error::Index(format!("{context}: {e}"))
 }
 
-fn fts_params() -> FtsIndexBuilder {
+fn fts_params(tokenizer: &KeywordTokenizer) -> FtsIndexBuilder {
     FtsIndexBuilder::default()
-        .base_tokenizer(FTS_BASE_TOKENIZER.to_owned())
+        .base_tokenizer(tokenizer.base.name().to_owned())
         .lower_case(FTS_LOWER_CASE)
-        .stem(false)
-        .remove_stop_words(false)
+        .stem(tokenizer.stem)
+        .remove_stop_words(tokenizer.remove_stop_words)
         .max_token_length(None)
+}
+
+/// Build, or replace, the full-text index of each of `columns` in `table`.
+async fn create_fts_indexes(
+    table: &Table,
+    columns: &[&str],
+    tokenizer: &KeywordTokenizer,
+) -> Result<()> {
+    for column in columns {
+        table
+            .create_index(&[*column], Index::FTS(fts_params(tokenizer)))
+            .replace(true)
+            .execute()
+            .await
+            .map_err(index_err("create keyword index"))?;
+    }
+    Ok(())
 }
 
 async fn connect_db(path: &Path, options: &LanceStoreOptions) -> Result<Connection> {
     let uri = path
         .to_str()
         .ok_or_else(|| Error::Index(format!("index path {} is not UTF-8", path.display())))?;
+    let session = Session::new(
+        options.index_cache_bytes,
+        options.metadata_cache_bytes,
+        Arc::new(ObjectStoreRegistry::default()),
+    );
     connect(uri)
         .read_consistency_interval(options.read_consistency_interval)
+        .session(Arc::new(session))
         .execute()
         .await
         .map_err(index_err("open database"))
@@ -598,6 +744,7 @@ async fn open_or_create(
     name: &str,
     schema: SchemaRef,
     fts_columns: &[&str],
+    tokenizer: &KeywordTokenizer,
 ) -> Result<Table> {
     if names.iter().any(|n| n == name) {
         return open_table(db, name).await;
@@ -607,13 +754,7 @@ async fn open_or_create(
         .execute()
         .await
         .map_err(index_err("create table"))?;
-    for column in fts_columns {
-        table
-            .create_index(&[*column], Index::FTS(fts_params()))
-            .execute()
-            .await
-            .map_err(index_err("create keyword index"))?;
-    }
+    create_fts_indexes(&table, fts_columns, tokenizer).await?;
     Ok(table)
 }
 
