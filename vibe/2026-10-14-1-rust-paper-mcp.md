@@ -289,7 +289,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-7>
 
-### Step 7: Ingest pipeline and `index` command
+### Step 7: Ingest pipeline and `index` command [completed]
 
 - Component: paper-mcp-core
 - `src/ingest.rs`: `IndexLock` holding an exclusive lock on `$tool_dir/index.lock` via `std::fs::File::try_lock`, failing fast when another writer holds it; `index_papers(backend, store, embedder, nums, force, workers) -> IndexReport` running per paper: `meta`, `paper_md`, freshness check against content hash and format version (skip unless `--force`), chunk, prefix, embed, upsert, then `set_latest` per touched paper number using `list_revisions`; `MissingMarkdown` writes only the metadata record and is reported as no content; per-paper errors are collected without aborting; `optimize` runs at the end. `--workers N` bounds concurrent paper preparation while store writes stay serialized.

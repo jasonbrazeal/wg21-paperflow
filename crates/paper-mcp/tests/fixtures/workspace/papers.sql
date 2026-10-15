@@ -1,0 +1,18 @@
+-- Fixture paperstore rows. Tests replace {ws} with the absolute path of
+-- the temporary workspace the fixture is copied into, because paperstore
+-- records absolute source and Markdown paths.
+INSERT INTO papers (paper_id, year, title, authors, target_group, intent, url, document_date, mailing_date, previous_version, source_file, markdown_path) VALUES
+('P2300R0', '2021', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r0', '2021-06-15', '2021-06', '', '{ws}/paperstore/p2300r0.html', '{ws}/paperstore/p2300r0.md'),
+('P2300R1', '2021', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r1', '2021-07-10', '2021-07', 'p2300r0', '{ws}/paperstore/p2300r1.html', '{ws}/paperstore/p2300r1.md'),
+('P2300R2', '2021', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r2', '2021-10-04', '2021-10', 'p2300r1', '{ws}/paperstore/p2300r2.html', '{ws}/paperstore/p2300r2.md'),
+('P2300R3', '2021', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r3', '2021-12-20', '2021-12', 'p2300r2', '{ws}/paperstore/p2300r3.html', '{ws}/paperstore/p2300r3.md'),
+('P2300R4', '2022', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r4', '2022-01-18', '2022-01', 'p2300r3', '{ws}/paperstore/p2300r4.html', '{ws}/paperstore/p2300r4.md'),
+('P2300R5', '2022', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r5', '2022-04-22', '2022-04', 'p2300r4', '{ws}/paperstore/p2300r5.html', '{ws}/paperstore/p2300r5.md'),
+('P2300R6', '2023', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r6', '2023-02-14', '2023-02', 'p2300r5', '{ws}/paperstore/p2300r6.html', '{ws}/paperstore/p2300r6.md'),
+('P2300R7', '2023', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r7', '2023-05-19', '2023-05', 'p2300r6', '{ws}/paperstore/p2300r7.html', '{ws}/paperstore/p2300r7.md'),
+('P2300R8', '2024', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r8', '2024-04-02', '2024-04', 'p2300r7', '{ws}/paperstore/p2300r8.html', '{ws}/paperstore/p2300r8.md'),
+('P2300R9', '2024', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r9', '2024-04-16', '2024-04', 'p2300r8', '{ws}/paperstore/p2300r9.html', '{ws}/paperstore/p2300r9.md'),
+('P2300R10', '2024', '`std::execution`', '["Michal Dominiak", "Eric Niebler"]', 'LEWG Library Evolution', 'info', 'https://wg21.link/p2300r10', '2024-06-28', '2024-07', 'p2300r9', '{ws}/paperstore/p2300r10.html', '{ws}/paperstore/p2300r10.md'),
+('P2169R4', '2023', 'A Nice Placeholder With No Name', '["Corentin Jabot", "Michael Park"]', 'CWG Core', '', 'https://wg21.link/p2169r4', '2023-06-16', '2023-07', 'p2169r3', '{ws}/paperstore/p2169r4.pdf', '{ws}/paperstore/p2169r4.md'),
+('P2322R4', '2021', 'ranges::fold', '["Barry Revzin"]', 'Library Evolution', '', 'https://wg21.link/p2322r4', '2021-09-13', '2021-09', 'p2322r3', '{ws}/paperstore/p2322r4.html', '{ws}/paperstore/p2322r4.md'),
+('N4950', '2023', 'Working Draft, Standard for Programming Language C++', '["Thomas Koeppe"]', 'WG21', '', 'https://wg21.link/n4950', '2023-05-10', '2023-05', 'n4944', '{ws}/paperstore/n4950.pdf', '');

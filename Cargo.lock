@@ -5998,6 +5998,7 @@ dependencies = [
  "paper-mcp",
  "paperstore",
  "paperstore-sqlite",
+ "rusqlite",
  "serde_json",
  "sha2 0.11.0",
  "temp-env",

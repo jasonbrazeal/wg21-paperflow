@@ -78,6 +78,19 @@ pub enum Error {
     #[error("index store error: {0}")]
     Index(String),
 
+    /// Another writer holds the index lock.
+    #[error("another index run holds {}; wait for it to finish", .0.display())]
+    IndexLocked(PathBuf),
+
+    /// The index lock file could not be created or locked.
+    #[error("cannot lock {}: {source}", path.display())]
+    LockIo {
+        /// The lock file.
+        path: PathBuf,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+
     /// A paperstore operation failed.
     #[error(transparent)]
     Store(#[from] paperstore::Error),

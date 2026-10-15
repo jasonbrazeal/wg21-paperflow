@@ -5,4 +5,6 @@
 
 //! Integration tests for the paper-mcp library.
 
+mod cli;
+mod ingest;
 mod store;
