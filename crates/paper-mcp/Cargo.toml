@@ -24,13 +24,13 @@ lancedb = { version = "=0.40.0", features = ["remote"] }
 # Pinned exactly: ort has no stable 2.x, and this must match the exact
 # version fastembed 7.1.1 requires.
 ort = { version = "=2.0.0-rc.13", default-features = false }
+paperstore = { version = "0.1.0", path = "../paperstore" }
 rmcp = { version = "=3.5.1", features = ["server", "transport-streamable-http-server"] }
 sha2 = "0.11.1"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
 
 [dev-dependencies]
-paperstore = { version = "0.1.0", path = "../paperstore" }
 paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 temp-env = "0.3.6"

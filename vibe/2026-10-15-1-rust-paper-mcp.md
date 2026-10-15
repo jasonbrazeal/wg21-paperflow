@@ -281,7 +281,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-6>
 
-### Step 6: Revision grouping and latest computation
+### Step 6: Revision grouping and latest computation [completed]
 
 - Component: paper-mcp-index
 - `src/revision.rs`: `revisionless_id(&PaperNum) -> String`, `revision_number(&PaperNum) -> Option<u32>` (None for N and SD), `latest_set(&[PaperRow]) -> BTreeSet<String>` computing `is_latest` per revision group (N and SD always latest), `RevisionScope` enum {`Latest` (default), `All`}, and `parse_revision_query(&str)` accepting IDs with or without `R<n>` for `list_revisions` only.
