@@ -358,7 +358,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-13>
 
-### Step 13: Golden query set and evaluation harness
+### Step 13: Golden query set and evaluation harness [completed]
 
 - Component: retrieval-evaluation
 - Placement: after the server, because it measures the complete search stack and server latency. It is a standalone tool for choosing and guarding configurations.

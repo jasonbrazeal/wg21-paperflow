@@ -6,6 +6,7 @@
 //! Integration tests for the paper-mcp library.
 
 mod cli;
+mod eval;
 mod ingest;
 mod search;
 mod search_tools;

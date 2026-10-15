@@ -8,6 +8,7 @@
 use std::io::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::Router;
@@ -177,10 +178,42 @@ impl<'a> MakeWriter<'a> for Captured {
     }
 }
 
-// The default `#[tokio::test]` runtime is single-threaded, so the
-// thread-local subscriber sees every task's events.
-#[tokio::test]
-async fn token_never_appears_in_logs() -> TestResult {
+/// Set in the child process that runs the log-capture scenario alone.
+const LOG_CHILD_ENV: &str = "PAPER_MCP_TOKEN_LOG_CHILD";
+
+/// Libtest name of [`token_never_appears_in_logs`] inside this binary.
+const LOG_TEST_NAME: &str = "server::token_never_appears_in_logs";
+
+// tracing caches each callsite's interest process-wide. A concurrent test
+// that first hits a callsite on a thread without a subscriber can race
+// `set_default` here and cache `never`, silently dropping the event. The
+// scenario therefore runs in a re-executed test binary where it is the only
+// test.
+#[test]
+fn token_never_appears_in_logs() -> TestResult {
+    if std::env::var_os(LOG_CHILD_ENV).is_some() {
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(token_log_scenario());
+    }
+    let output = Command::new(std::env::current_exe()?)
+        .args([LOG_TEST_NAME, "--exact", "--test-threads=1", "--nocapture"])
+        .env(LOG_CHILD_ENV, "1")
+        .output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success() && stdout.contains("test result: ok. 1 passed"),
+        "log scenario failed in child process ({}):\n{stdout}\n{stderr}",
+        output.status
+    );
+    Ok(())
+}
+
+// The current-thread runtime lets the thread-local subscriber see every
+// task's events.
+async fn token_log_scenario() -> TestResult {
     let logs = Captured::default();
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::TRACE)

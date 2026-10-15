@@ -142,6 +142,10 @@ pub enum Error {
         to: paperstore::PaperNum,
     },
 
+    /// A golden query set is malformed or incomplete.
+    #[error("invalid golden set: {0}")]
+    Golden(String),
+
     /// A paperstore operation failed.
     #[error(transparent)]
     Store(#[from] paperstore::Error),

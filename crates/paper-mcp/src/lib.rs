@@ -21,11 +21,13 @@
 //! [`cursor`] pages ranked search results through stable server-side cursors.
 //! [`lines`] cuts line ranges out of a paper with Python slice semantics.
 //! [`server`] serves the MCP read and search tools over bearer-authenticated
-//! Streamable HTTP.
+//! Streamable HTTP, and [`eval`] measures retrieval quality against a
+//! hand-labeled golden query set.
 
 pub mod chunk;
 pub mod cursor;
 pub mod error;
+pub mod eval;
 pub mod filter;
 pub mod format;
 pub mod ingest;
@@ -43,6 +45,10 @@ pub use cursor::{
     DEFAULT_PAGE_SIZE, Page, SystemClock,
 };
 pub use error::{Error, Result};
+pub use eval::{
+    Category, ConfigResult, DEFAULT_RECALL_K, EvalConfig, EvalReport, GoldenQuery, GoldenSet,
+    LabeledRange, MIN_GOLDEN_QUERIES, QueryResult, Throughput, evaluate, recall_at_k,
+};
 pub use filter::SearchFilter;
 pub use format::{IndexFormatVersion, content_hash};
 pub use ingest::{
