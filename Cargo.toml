@@ -9,7 +9,7 @@ exclude = ["vendor/promptforge"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.91"
 license = "BSL-1.0"
 repository = "https://github.com/cppalliance/wg21-paperflow"
 

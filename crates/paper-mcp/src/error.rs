@@ -74,6 +74,10 @@ pub enum Error {
     #[error("model inference failed: {0}")]
     Inference(String),
 
+    /// An index store operation failed or found inconsistent data.
+    #[error("index store error: {0}")]
+    Index(String),
+
     /// A paperstore operation failed.
     #[error(transparent)]
     Store(#[from] paperstore::Error),

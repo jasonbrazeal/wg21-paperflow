@@ -276,7 +276,7 @@ Components in dependency order: paperstore listing (1), paper-mcp core library a
 
 <step-6>
 
-### Step 6: LanceDB index store
+### Step 6: LanceDB index store [completed]
 
 - Component: paper-mcp-core
 - `Cargo.toml` (root): raise workspace `rust-version` to 1.91. `crates/paper-mcp/Cargo.toml`: add `lancedb = "=0.40.0"` and the matching `arrow-array`/`arrow-schema` versions, pinned exactly; update `Cargo.lock`.
