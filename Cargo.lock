@@ -6104,6 +6104,8 @@ dependencies = [
  "paperstore-sqlite",
  "rmcp",
  "rusqlite",
+ "schemars 1.2.2",
+ "serde",
  "sha2 0.11.1",
  "temp-env",
  "tempfile",

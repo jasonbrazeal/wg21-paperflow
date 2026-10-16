@@ -308,6 +308,20 @@ impl PaperIndex {
         Ok(self.conn.open_table(PAPERS_TABLE).execute().await?)
     }
 
+    /// Distinct IDs of the papers with at least one chunk row matching the
+    /// LanceDB `predicate`, or of every indexed paper when it is `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IndexError::Lance`] when the chunks table cannot be queried
+    /// and [`IndexError::Schema`] when its `paper_id` column is malformed.
+    pub async fn paper_ids_matching(
+        &self,
+        predicate: Option<&str>,
+    ) -> Result<BTreeSet<String>, IndexError> {
+        paper_ids_matching(&self.chunks_table().await?, predicate).await
+    }
+
     /// Check that the index was completely built for `embedder` and the
     /// current [`CHUNKER_VERSION`].
     ///
@@ -858,7 +872,15 @@ async fn collect(
 /// Distinct paper IDs with chunk rows, whether or not they have a manifest
 /// row.
 async fn read_chunk_paper_ids(chunks: &Table) -> Result<BTreeSet<String>, IndexError> {
-    let batches = collect(chunks, None, &["paper_id"]).await?;
+    paper_ids_matching(chunks, None).await
+}
+
+/// Distinct paper IDs of the chunk rows matching `predicate`.
+async fn paper_ids_matching(
+    chunks: &Table,
+    predicate: Option<&str>,
+) -> Result<BTreeSet<String>, IndexError> {
+    let batches = collect(chunks, predicate, &["paper_id"]).await?;
     let mut ids = BTreeSet::new();
     for batch in &batches {
         let column = string_column(batch, CHUNKS_TABLE, "paper_id")?;

@@ -326,7 +326,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-10>
 
-### Step 10: MCP tool handlers
+### Step 10: MCP tool handlers [completed]
 
 - Component: paper-mcp-server
 - `src/lines.rs`: `resolve_slice(total: usize, start: Option<i64>, end: Option<i64>) -> (usize, usize)` with Python slice semantics (0-based, end exclusive, negatives from the end, clamping, reversed bounds yield empty).

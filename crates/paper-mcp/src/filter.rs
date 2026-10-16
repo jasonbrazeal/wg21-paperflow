@@ -191,6 +191,24 @@ impl SearchFilters {
     #[must_use]
     pub fn to_predicate(&self) -> String {
         let mut clauses = vec!["has_text = true".to_owned()];
+        clauses.extend(self.filter_clauses());
+        clauses.join(" AND ")
+    }
+
+    /// Render the filters as a LanceDB `only_if` predicate selecting the
+    /// rows of matching papers, with or without text.
+    ///
+    /// The same as [`SearchFilters::to_predicate`] without the `has_text`
+    /// requirement. Metadata-only rows have no chunk kind, so a chunk kind
+    /// filter still excludes them. Returns `None` when no clause applies.
+    #[must_use]
+    pub fn to_listing_predicate(&self) -> Option<String> {
+        let clauses = self.filter_clauses();
+        (!clauses.is_empty()).then(|| clauses.join(" AND "))
+    }
+
+    fn filter_clauses(&self) -> Vec<String> {
+        let mut clauses = Vec::new();
         if !self.paper_ids.is_empty() {
             let ids: Vec<String> = self
                 .paper_ids
@@ -222,7 +240,7 @@ impl SearchFilters {
         if let Some(kind) = self.chunk_kind {
             clauses.push(format!("chunk_kind = {}", sql_string(kind.as_str())));
         }
-        clauses.join(" AND ")
+        clauses
     }
 }
 
@@ -458,6 +476,38 @@ mod tests {
                  AND chunk_kind = 'wording'"
             )
         );
+    }
+
+    #[test]
+    fn listing_predicate_is_the_search_predicate_without_has_text() {
+        let all = FilterInput {
+            revision_scope: Some(text("all")),
+            ..FilterInput::default()
+        };
+        assert_eq!(filters(&all).to_listing_predicate(), None);
+        let cases = [
+            FilterInput::default(),
+            FilterInput {
+                paper_ids: Some(ids(&["P2300R10"])),
+                ..FilterInput::default()
+            },
+            FilterInput {
+                revision_scope: Some(text("all")),
+                author: Some(text("Dominiak")),
+                chunk_kind: Some(text("wording")),
+                ..FilterInput::default()
+            },
+        ];
+        for input in cases {
+            let validated = filters(&input);
+            assert_eq!(
+                validated
+                    .to_listing_predicate()
+                    .map(|p| format!("{HAS_TEXT} AND {p}")),
+                Some(validated.to_predicate()),
+                "{input:?}"
+            );
+        }
     }
 
     #[test]
