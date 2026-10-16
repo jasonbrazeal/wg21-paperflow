@@ -338,10 +338,10 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-11>
 
-### Step 11: cpp-mcp-compatible bearer auth
+### Step 11: cpp-mcp-compatible bearer auth [completed]
 
 - Component: paper-mcp-server
-- `src/auth.rs`: `load_keys(path) -> Result<BTreeSet<String>>` matching `packages/cpp-mcp/src/cpp_mcp/server.py` `_load_keys` (one key per line, `#` comments, blank lines ignored); `KeyStore` (shared, swappable key set) with `reload()`; a Tower layer `BearerKeyLayer` rejecting requests whose `Authorization: Bearer <key>` is missing or unknown with the same status codes as `_BearerKeyMiddleware`; keys file resolved from `--keys-file`, else `$CPP_MCP_KEYS_FILE`, else `/etc/cpp-mcp/keys`.
+- `src/auth.rs`: `load_keys(path) -> Result<BTreeSet<String>>` matching `packages/cpp-mcp/src/cpp_mcp/server.py` `_load_keys` (one key per line, `#` comments, blank lines ignored); `KeyStore` (shared, swappable key set) with `reload()`; a Tower layer `BearerKeyLayer` rejecting requests whose `Authorization: Bearer <key>` is missing or unknown with HTTP 401 Unauthorized (the Functional Specification requires rejection only; cpp-mcp's `_BearerKeyMiddleware` returns a JSON-RPC error inside HTTP 200 and skips notifications, which this layer deliberately does not copy); keys file resolved from `--keys-file`, else `$CPP_MCP_KEYS_FILE`, else `/etc/cpp-mcp/keys`.
 - Tests: inline unit tests for keys-file parsing (comments, blank lines, whitespace) and reload picking up an added key; a Tower service test for missing, wrong, and valid keys.
 - Commit: `paper-mcp: bearer key auth compatible with cpp-mcp`.
 

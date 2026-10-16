@@ -32,6 +32,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 sha2 = "0.11.1"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal", "sync"] }
+tower = { version = "0.5.3", default-features = false }
 tracing = "0.1.44"
 
 [dev-dependencies]
@@ -39,3 +40,4 @@ paperstore-sqlite = { version = "0.1.0", path = "../paperstore-sqlite" }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 temp-env = "0.3.6"
 tempfile = "3.27.0"
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
