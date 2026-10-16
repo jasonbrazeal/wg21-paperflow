@@ -304,7 +304,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-8>
 
-### Step 8: Validated search filters
+### Step 8: Validated search filters [completed]
 
 - Component: paper-mcp-search
 - `src/filter.rs`: `SearchFilters` struct (paper_ids, revision_scope, year range, mailing, target_group, author substring, intent, chunk_kind), validated from tool input (paper IDs through `PaperNum::parse`, enums parsed, numbers typed), and `to_predicate(&self) -> String` producing the LanceDB `only_if` SQL predicate. String values are escaped (quote doubling, `LIKE` wildcard escaping) or rejected; no user text is concatenated unescaped. Revision scope adds `is_latest = true` only when no paper ID filter is present, and `has_text = true` is always applied for search.

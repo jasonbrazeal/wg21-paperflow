@@ -17,6 +17,8 @@
 //! Each chunk carries a deterministic contextual prefix ([`build_prefix`]) in
 //! its `indexed_text`, used for both embedding and keyword search.
 
+use std::str::FromStr;
+
 /// Version of the chunking rules, recorded in the index manifest.
 ///
 /// Bump whenever a change alters chunk boundaries, kinds, or prefixes, so the
@@ -82,6 +84,29 @@ impl ChunkKind {
             Self::Code => "code",
             Self::RevisionHistory => "revision_history",
             Self::FrontMatter => "front_matter",
+        }
+    }
+}
+
+/// A chunk kind name that is not one of the [`ChunkKind`] names.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[error(
+    "{0:?} is not a chunk kind; expected body, wording, code, revision_history, or front_matter"
+)]
+pub struct UnknownChunkKind(pub String);
+
+impl FromStr for ChunkKind {
+    type Err = UnknownChunkKind;
+
+    /// Parse a name produced by [`ChunkKind::as_str`], exactly as named.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "body" => Ok(Self::Body),
+            "wording" => Ok(Self::Wording),
+            "code" => Ok(Self::Code),
+            "revision_history" => Ok(Self::RevisionHistory),
+            "front_matter" => Ok(Self::FrontMatter),
+            _ => Err(UnknownChunkKind(s.to_owned())),
         }
     }
 }
@@ -481,6 +506,25 @@ fn heading_kind(path: &[String]) -> Option<ChunkKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_kind_parses_every_stored_name_and_rejects_others() {
+        for kind in [
+            ChunkKind::Body,
+            ChunkKind::Wording,
+            ChunkKind::Code,
+            ChunkKind::RevisionHistory,
+            ChunkKind::FrontMatter,
+        ] {
+            assert_eq!(kind.as_str().parse::<ChunkKind>(), Ok(kind));
+        }
+        for bad in ["", "Body", "revision-history", "body "] {
+            assert_eq!(
+                bad.parse::<ChunkKind>(),
+                Err(UnknownChunkKind(bad.to_owned()))
+            );
+        }
+    }
 
     fn meta() -> PrefixMeta {
         PrefixMeta {
