@@ -117,13 +117,13 @@ Verification runs against a checked-in fixture corpus and a deterministic embedd
   - Index the fixture, then for each `search_type` assert exact paper ID filtering, the `latest` default and `all` scope without a paper filter, and metadata-only exclusion; assert incremental reindex re-embeds only a touched paper.
   - Start `paper-mcp serve`; call every tool with an rmcp client and validate result schemas; confirm a hit's `start_line`/`end_line` passed to `get_paper_lines` returns that chunk's text.
   - HTTP auth: no key and wrong key rejected, valid key accepted, newly added key accepted after SIGHUP, startup without keys fails unless `--no-auth`.
-  - Opt-in real-model test (enabled by an environment variable): download `nomic-embed-text-v1.5`, index P2300R0 through P2300R10 from `$WG21_DATA_DIR`, and assert a sender/receiver query with `latest` scope returns P2300R10 hits for each search type.
+  - Opt-in real-model test (enabled by an environment variable): download `nomic-embed-text-v1.5`, index P1048R0 and P1048R1 from `$WG21_DATA_DIR`, and assert a scoped-enumeration type trait query with `latest` scope returns P1048R1 hits for each search type (operator reduced the sample from P2300R0-R10 to two small revisions for speed).
 - Regression, security, and performance:
   - Server refuses to start on manifest model or chunker mismatch.
 - Operational limits:
   - Target hardware: the Ubuntu development VM, CPU only.
   - Downloads: the embedding model (about 0.5 GB) is permitted; nothing substantially larger may be downloaded. No paper data is downloaded.
-  - Data: fixtures plus the 11-paper P2300 sample. No command processes the full corpus.
+  - Data: fixtures plus the 2-paper P1048 sample (P1048R0, P1048R1). No command processes the full corpus.
   - Longest command: a clean `cargo build` of the LanceDB dependency tree may exceed 10 minutes; no other command is expected to exceed 10 minutes.
   - Disk: index and model for the sample stay under 2 GB.
 - Exit criteria:
@@ -374,10 +374,10 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-14>
 
-### Step 14: Opt-in real-model test and exit checks
+### Step 14: Opt-in real-model test and exit checks [completed]
 
 - Component: paper-mcp-ops
-- `tests/it/` test gated by an environment variable (for example `PAPER_MCP_REAL_MODEL=1`) that downloads `nomic-embed-text-v1.5` (about 0.5 GB, the only permitted download), indexes exactly P2300R0 through P2300R10 from `$WG21_DATA_DIR` into a temporary index directory (no full-corpus run), and asserts a sender/receiver query with `latest` scope returns P2300R10 hits for each search type. Index plus model stay under 2 GB.
+- `tests/it/` test gated by an environment variable (for example `PAPER_MCP_REAL_MODEL=1`) that downloads `nomic-embed-text-v1.5` (about 0.5 GB, the only permitted download), indexes exactly P1048R0 and P1048R1 from `$WG21_DATA_DIR` into a temporary index directory (no full-corpus run), and asserts a "type trait to detect scoped enumerations" query with `latest` scope returns P1048R1 hits for each search type. Index plus model stay under 2 GB.
 - Run the test once and report its command and outcome in the coding return (the run ledger records it). Run `cargo fmt --all --check`, `cargo clippy --all-targets --locked` clean under workspace lints, and `cargo test --locked` for `paperstore`, `paperstore-sqlite`, and `paper-mcp`, and confirm every Functional Specification acceptance criterion maps to a passing test.
 - Commit: `paper-mcp: opt-in real-model test`.
 

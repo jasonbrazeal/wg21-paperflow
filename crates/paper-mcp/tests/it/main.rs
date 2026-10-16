@@ -21,6 +21,7 @@ use rusqlite::Connection;
 use tempfile::TempDir;
 
 mod index;
+mod real_model;
 mod search;
 mod server;
 mod tools;
