@@ -93,7 +93,7 @@ One new crate, `crates/paper-mcp`, holds a library (chunking, embedding, indexin
   - `.github/workflows/tests.yml`: add `cargo build`/`cargo test --locked` for `paper-mcp` and `paperstore*` alongside the existing paperweight job.
   - `justfile`: recipes for index and serve.
 - Data, persistence, failure, security, and privacy constraints:
-  - Index lives at `$WG21_DATA_DIR/paperindex/` with a LanceDB `chunks` table (chunk id, paper_id, revisionless_id (paper_id with any `R<n>` suffix removed, internal grouping key), revision number, is_latest, has_text, year, mailing_date, target_group, authors, intent, chunk_kind, section_path, start_line, end_line, text, indexed_text, vector) and a `papers` manifest table (paper_id, content hash, chunker version, model id, indexed_at).
+  - Index lives at `$WG21_DATA_DIR/paperindex/` with a LanceDB `chunks` table (chunk id, paper_id, title (copied onto each row so search hits carry it without a paperstore lookup), revisionless_id (paper_id with any `R<n>` suffix removed, internal grouping key), revision number, is_latest, has_text, year, mailing_date, target_group, authors, intent, chunk_kind, section_path, start_line, end_line, text, indexed_text, vector) and a `papers` manifest table (paper_id, content hash, chunker version, model id, indexed_at).
   - Content hash is SHA-256 of the Markdown bytes; a paper is re-embedded when its hash, the chunker version, or the model id changes. `is_latest` is recomputed across each paper's revisions after every run.
   - An FTS index on `indexed_text` and scalar indexes on filter columns are rebuilt at the end of each indexing run.
   - The index is derived data and may be deleted and rebuilt at any time. On the server host the operator builds it from that host's `$WG21_DATA_DIR`.
@@ -315,7 +315,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-9>
 
-### Step 9: Keyword, vector, and hybrid search
+### Step 9: Keyword, vector, and hybrid search [completed]
 
 - Component: paper-mcp-search
 - `src/search.rs`: `SearchType` enum {`hybrid`, `vector`, `keyword`}, `SearchRequest` (query, search_type, filters, limit with a named default and maximum constant), `SearchHit` (paper_id, revision number, title, authors, section_path, chunk_kind, start_line, end_line, text, score, url `https://wg21.link/<pid>` computed), and `search(index, embedder, &SearchRequest)` issuing a LanceDB FTS, vector, or hybrid RRF query with the filter predicate applied as a pre-filter. Results are ordered deterministically (score, then paper_id, then start_line).

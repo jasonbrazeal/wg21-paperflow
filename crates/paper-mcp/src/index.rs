@@ -82,10 +82,10 @@ const BTREE_COLUMNS: [&str; 5] = [
 const BITMAP_COLUMNS: [&str; 4] = ["is_latest", "has_text", "intent", "chunk_kind"];
 
 /// Column holding the full-text-indexed chunk text.
-const FTS_COLUMN: &str = "indexed_text";
+pub(crate) const FTS_COLUMN: &str = "indexed_text";
 
 /// Column holding chunk embeddings.
-const VECTOR_COLUMN: &str = "vector";
+pub(crate) const VECTOR_COLUMN: &str = "vector";
 
 /// Chunk ID suffix of a metadata-only paper's single row.
 const METADATA_CHUNK_SUFFIX: &str = "meta";
@@ -403,8 +403,11 @@ impl PaperIndex {
     /// clear the index manifest when it does not match `current`.
     async fn prepare(&self, current: &IndexManifest) -> Result<(), IndexError> {
         let mut names = self.table_names().await?;
-        let stale_chunks = names.contains(CHUNKS_TABLE)
-            && vector_dim(&self.chunks_table().await?.schema().await?) != Some(current.dim);
+        let dim = i32::try_from(current.dim).map_err(|_| IndexError::OutOfRange("dim"))?;
+        let stale_chunks = names.contains(CHUNKS_TABLE) && {
+            let schema = self.chunks_table().await?.schema().await?;
+            vector_dim(&schema) != Some(current.dim) || !same_columns(&schema, &chunks_schema(dim))
+        };
         let stale_papers = names.contains(PAPERS_TABLE)
             && !same_columns(
                 &self.papers_table().await?.schema().await?,
@@ -412,7 +415,7 @@ impl PaperIndex {
             );
         if stale_chunks || stale_papers {
             info!(
-                "vector dimension is not {} or the paper manifest layout changed; dropping chunk and paper tables",
+                "vector dimension is not {} or the chunk or paper table layout changed; dropping chunk and paper tables",
                 current.dim
             );
             for name in [CHUNKS_TABLE, PAPERS_TABLE] {
@@ -421,7 +424,6 @@ impl PaperIndex {
                 }
             }
         }
-        let dim = i32::try_from(current.dim).map_err(|_| IndexError::OutOfRange("dim"))?;
         for (name, schema) in [
             (CHUNKS_TABLE, chunks_schema(dim)),
             (PAPERS_TABLE, papers_schema()),
@@ -488,6 +490,7 @@ impl<B: StorageBackend + ?Sized, E: Embedder + ?Sized> fmt::Debug for Indexer<'_
 /// Paper metadata copied onto each of the paper's chunk rows.
 struct PaperFields {
     paper_id: String,
+    title: String,
     revisionless_id: String,
     revision: Option<u32>,
     is_latest: bool,
@@ -690,6 +693,7 @@ impl<'a, B: StorageBackend + ?Sized, E: Embedder + ?Sized> Indexer<'a, B, E> {
 fn paper_fields(row: &PaperRow, num: &PaperNum, latest: &BTreeSet<String>) -> PaperFields {
     PaperFields {
         paper_id: num.as_str().to_owned(),
+        title: row.title.clone(),
         revisionless_id: revisionless_id(num),
         revision: revision_number(num),
         is_latest: latest.contains(num.as_str()),
@@ -898,7 +902,7 @@ async fn read_paper_manifest(papers: &Table) -> Result<BTreeMap<String, Manifest
     Ok(rows)
 }
 
-fn string_column<'b>(
+pub(crate) fn string_column<'b>(
     batch: &'b RecordBatch,
     table: &'static str,
     column: &str,
@@ -912,7 +916,7 @@ fn string_column<'b>(
         })
 }
 
-fn u32_column<'b>(
+pub(crate) fn u32_column<'b>(
     batch: &'b RecordBatch,
     table: &'static str,
     column: &str,
@@ -952,6 +956,7 @@ fn chunks_schema(dim: i32) -> SchemaRef {
     Arc::new(Schema::new(vec![
         utf8("chunk_id", false),
         utf8("paper_id", false),
+        utf8("title", false),
         utf8("revisionless_id", false),
         Field::new("revision", DataType::UInt32, true),
         Field::new("is_latest", DataType::Boolean, false),
@@ -1082,6 +1087,7 @@ fn chunk_batch(
     let columns: Vec<ArrayRef> = vec![
         Arc::new(chunk_ids.finish()),
         repeat(&fields.paper_id),
+        repeat(&fields.title),
         repeat(&fields.revisionless_id),
         Arc::new(revisions.finish()),
         Arc::new(latest.finish()),
@@ -1156,6 +1162,7 @@ mod tests {
     fn fields(paper_id: &str) -> PaperFields {
         PaperFields {
             paper_id: paper_id.to_owned(),
+            title: String::new(),
             revisionless_id: paper_id.to_owned(),
             revision: None,
             is_latest: true,

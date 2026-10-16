@@ -478,6 +478,48 @@ fn changing_chunker_version_or_model_id_reembeds_all() {
 }
 
 #[test]
+fn chunk_layout_change_at_same_dim_rebuilds_both_tables() {
+    with_fixture(|workspace| {
+        block_on(async {
+            run_index(
+                workspace,
+                &CountingEmbedder::new(MODEL_ID, DIM),
+                CHUNKER_VERSION,
+            )
+            .await;
+            let index = open_index(workspace).await;
+            let chunks = index
+                .chunks_table()
+                .await
+                .unwrap_or_else(|e| panic!("open chunks: {e}"));
+            chunks
+                .drop_columns(&["title"])
+                .await
+                .unwrap_or_else(|e| panic!("drop title: {e}"));
+
+            let rebuilt = CountingEmbedder::new(MODEL_ID, DIM);
+            let report = run_index(workspace, &rebuilt, CHUNKER_VERSION).await;
+            assert!(report.is_success(), "{report:?}");
+            assert_eq!(rebuilt.calls(), TEXT_BEARING_IDS.len());
+            assert_eq!(report.embedded, text_ids());
+
+            let schema = index
+                .chunks_table()
+                .await
+                .unwrap_or_else(|e| panic!("open chunks: {e}"))
+                .schema()
+                .await
+                .unwrap_or_else(|e| panic!("chunks schema: {e}"));
+            assert!(schema.field_with_name("title").is_ok());
+            let expected: usize = expected_chunks().values().sum();
+            assert_eq!(count(&index, "has_text = true").await, expected);
+            assert_eq!(paper_count(&index).await, FIXTURE_PAPER_IDS.len());
+            assert!(index.check_manifest(&rebuilt).await.is_ok());
+        });
+    });
+}
+
+#[test]
 fn interrupted_run_resumes() {
     with_fixture(|workspace| {
         let crashing = CountingEmbedder {
