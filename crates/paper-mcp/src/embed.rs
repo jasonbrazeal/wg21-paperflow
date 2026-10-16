@@ -38,6 +38,24 @@ pub const FAST_EMBEDDER_MAX_LENGTH: usize = 2048;
 /// Texts per inference batch in [`FastEmbedder::embed_documents`].
 pub const FAST_EMBEDDER_BATCH_SIZE: usize = 16;
 
+/// Environment variable that, set to [`TEST_EMBEDDER_HASH`], makes the
+/// `paper-mcp` binary use a [`HashEmbedder`] instead of loading the model.
+/// For end-to-end tests only.
+#[doc(hidden)]
+pub const TEST_EMBEDDER_ENV: &str = "PAPER_MCP_TEST_EMBEDDER";
+
+/// Value of [`TEST_EMBEDDER_ENV`] selecting the test [`HashEmbedder`].
+#[doc(hidden)]
+pub const TEST_EMBEDDER_HASH: &str = "hash";
+
+/// Model identifier of the binary's test [`HashEmbedder`].
+#[doc(hidden)]
+pub const TEST_EMBEDDER_MODEL_ID: &str = "test/hash";
+
+/// Output dimension of the binary's test [`HashEmbedder`].
+#[doc(hidden)]
+pub const TEST_EMBEDDER_DIM: usize = 16;
+
 /// Errors raised while producing embeddings.
 #[derive(Debug, thiserror::Error)]
 pub enum EmbedError {

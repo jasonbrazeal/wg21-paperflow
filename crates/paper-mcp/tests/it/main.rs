@@ -22,6 +22,7 @@ use tempfile::TempDir;
 
 mod index;
 mod search;
+mod server;
 mod tools;
 
 /// Every paper in the fixture, in `paper_id` order.

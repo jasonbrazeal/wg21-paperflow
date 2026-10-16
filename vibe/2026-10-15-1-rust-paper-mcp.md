@@ -349,7 +349,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-12>
 
-### Step 12: CLI and Streamable HTTP server
+### Step 12: CLI and Streamable HTTP server [completed]
 
 - Component: paper-mcp-server
 - `src/main.rs`: clap CLI with `index` (runs `Indexer` with `FastEmbedder`, prints the `IndexReport`, exits nonzero on any per-paper failure) and `serve --host --port --keys-file [--no-auth]`. `serve` checks the index manifest and refuses to start on model, dim, or chunker mismatch with the rebuild command; refuses to start without at least one key unless `--no-auth`; mounts rmcp `StreamableHttpService` on axum at `/mcp` behind `BearerKeyLayer`; reloads keys on SIGHUP. Uses `anyhow` and `logging` via `tracing` or `log`, writing diagnostics to stderr only. A hidden test-only embedder selection (for example a `PAPER_MCP_TEST_EMBEDDER=hash` environment variable) lets end-to-end tests run without the model download.
