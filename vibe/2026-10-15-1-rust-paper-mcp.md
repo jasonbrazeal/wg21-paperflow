@@ -360,7 +360,7 @@ Each step's tests pass before the next step starts. Run Rust commands through th
 
 <step-13>
 
-### Step 13: Deployment doc, justfile, CI, and cpp-mcp coexistence
+### Step 13: Deployment doc, justfile, CI, and cpp-mcp coexistence [completed]
 
 - Component: paper-mcp-ops
 - `crates/paper-mcp/docs/server-setup.md`: running `paper-mcp` on the `cpp-mcp` host per `packages/cpp-mcp/docs/server-setup.md`: its own systemd unit and `--host`/`--port` distinct from 127.0.0.1:8001, the shared `/etc/cpp-mcp/keys` file and SIGHUP reload, a Caddy route, building the index from that host's `$WG21_DATA_DIR`, and the rebuild command on manifest mismatch.

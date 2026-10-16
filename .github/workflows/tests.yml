@@ -112,6 +112,55 @@ jobs:
           path: target/release/paperweight
           if-no-files-found: error
 
+  paper-mcp:
+    name: paper-mcp (cargo, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Platforms with prebuilt ONNX Runtime binaries where LanceDB builds.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # The Cargo workspace includes paperweight, whose vendor/promptforge
+      # submodule must be present for any workspace build.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # LanceDB's build scripts compile protobuf definitions.
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build paper-mcp
+        run: cargo build -p paper-mcp --locked
+
+      # Tests use the hash test embedder; nothing downloads the model.
+      - name: Test paper-mcp and paperstore
+        run: cargo test --locked -p paperstore -p paperstore-sqlite -p paper-mcp
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Test cpp-mcp coexistence
+        run: uv run --no-dev --package cpp-mcp --with pytest pytest tests/test_paper_mcp_cpp_mcp_coexist.py
+        env:
+          PAPER_MCP_BIN: ${{ github.workspace }}/target/debug/paper-mcp
+
   integration-tests:
     name: integration tests
     runs-on: ubuntu-latest
